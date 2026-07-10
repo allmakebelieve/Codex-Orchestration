@@ -39,6 +39,23 @@ jobs:
         with:
           node-version: "22"
       - name: Install the Codex CLI used by the lifecycle test
-        run: npm install --global @openai/codex@0.142.5
-      - name: Smoke-test install, upgrade, discovery, and configuration
+        run: npm install --global @openai/codex@0.144.1
+      - name: Smoke-test install, upgrade, native routing, and custom agents
         run: python tests/plugin_lifecycle_smoke.py
+
+  legacy-client-guard:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install the older shared-config client
+        run: npm install --global @openai/codex@0.142.5
+      - name: Confirm the installer must use its compatibility fallback
+        run: |
+          if codex -c 'features.multi_agent_v2.multi_agent_mode_hint_text="PROBE"' features list; then
+            echo "Expected Codex 0.142.5 to reject the newer structured policy field"
+            exit 1
+          fi

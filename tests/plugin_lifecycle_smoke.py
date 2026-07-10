@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Exercise a real Codex plugin install, Git upgrade, and runtime setup.
+"""Exercise a real Codex plugin install, Git upgrade, and both setup routes.
 
 A disposable bare Git marketplace is served over loopback HTTP. The real Codex
-CLI installs 0.2.0, runs its documented marketplace-upgrade command after 0.3.0
+CLI installs 0.3.0, runs its documented marketplace-upgrade command after 0.4.0
 is pushed to that Git remote, installs the refreshed package, verifies its cache,
-and runs the installed configurator and saved-role cleanup in an empty project.
+and runs native-policy plus custom-agent setup/status/cleanup in isolation.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -27,8 +28,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_ROOT = REPO_ROOT / "plugins" / "codex-orchestration"
 PLUGIN_ID = "codex-orchestration@codex-orchestration"
 MARKETPLACE_NAME = "codex-orchestration"
-OLD_RELEASE = "c7e5435f32eee3cec04e1759d16228b5202c8780"
-OLD_VERSION = "0.2.0"
+OLD_RELEASE = "d93b86e735a12a9fefcfd35b0b35199ce3e9a2a7"
+OLD_VERSION = "0.3.0"
+NEW_VERSION = "0.4.0"
 COMMAND_TIMEOUT_SECONDS = 60
 
 
@@ -197,7 +199,7 @@ def main() -> int:
         )
     )
     current_version = manifest.get("version")
-    assert_equal(current_version, "0.3.0", "checkout release version")
+    assert_equal(current_version, NEW_VERSION, "checkout release version")
 
     with tempfile.TemporaryDirectory(prefix="codex-orchestration-lifecycle-") as raw:
         temp = Path(raw)
@@ -432,9 +434,12 @@ def main() -> int:
                 sys.executable,
                 str(configurator),
                 "--scope",
-                "project",
+                "personal",
                 "--root",
                 str(project),
+                "--codex-home",
+                str(codex_home),
+                "--personal-route-names",
                 "--executor-model",
                 "gpt-5.6-luna",
                 "--executor-effort",
@@ -446,9 +451,9 @@ def main() -> int:
             preview = run(configure_command, cwd=project, env=env)
             if "Dry run only" not in preview.stdout:
                 raise SmokeFailure("Installed configurator did not report a dry run")
-            if (project / ".codex").exists():
+            if (codex_home / "agents").exists():
                 raise SmokeFailure(
-                    "Dry run unexpectedly created project configuration"
+                    "Dry run unexpectedly created personal agent configuration"
                 )
 
             applied = run([*configure_command, "--apply"], cwd=project, env=env)
@@ -456,28 +461,108 @@ def main() -> int:
                 raise SmokeFailure(
                     "Installed configurator did not validate the applied configuration"
                 )
+            route_suffix = hashlib.sha256(
+                os.fsencode(str(codex_home.resolve()))
+            ).hexdigest()[:12]
+            executor_name = f"codex_orchestration_executor_{route_suffix}"
             executor_file = (
-                project
-                / ".codex"
+                codex_home
                 / "agents"
-                / "codex-orchestration-executor.toml"
+                / f"codex-orchestration-executor-{route_suffix}.toml"
             )
             executor = executor_file.read_text(encoding="utf-8")
             for expected in (
-                'name = "codex_orchestration_executor"',
+                f'name = "{executor_name}"',
                 'model = "gpt-5.6-luna"',
                 'model_reasoning_effort = "xhigh"',
             ):
                 if expected not in executor:
                     raise SmokeFailure(f"Generated executor is missing {expected!r}")
 
+            native_configurator = (
+                installed_root
+                / "skills"
+                / "codex-orchestration"
+                / "scripts"
+                / "configure_native_routing.py"
+            )
+            native_command = [
+                sys.executable,
+                str(native_configurator),
+                "--codex-bin",
+                codex,
+                "--codex-home",
+                str(codex_home),
+                "--allow-incompatible-client",
+                "--executor-agent",
+                executor_name,
+            ]
+            native_preview = run(native_command, cwd=project, env=env)
+            if "Dry run only" not in native_preview.stdout:
+                raise SmokeFailure("Native configurator did not report a dry run")
+            native_applied = run([*native_command, "--apply"], cwd=project, env=env)
+            if "Native routing policy installed" not in native_applied.stdout:
+                raise SmokeFailure("Native configurator did not activate routing")
+
+            user_config = (codex_home / "config.toml").read_text(encoding="utf-8")
+            for expected in (
+                "[codex-orchestration managed-policy v1]",
+                f'agent_type = "{executor_name}"',
+                'fork_turns = "none"',
+                'tool_namespace = "agents"',
+            ):
+                if expected not in user_config:
+                    raise SmokeFailure(f"Native config is missing {expected!r}")
+
+            native_status = run(
+                [
+                    sys.executable,
+                    str(native_configurator),
+                    "--codex-bin",
+                    codex,
+                    "--codex-home",
+                    str(codex_home),
+                    "--status",
+                ],
+                cwd=project,
+                env=env,
+            )
+            if "Native policy: installed and effective" not in native_status.stdout:
+                raise SmokeFailure("Native status did not report the active preset")
+
+            native_disable = [
+                sys.executable,
+                str(native_configurator),
+                "--codex-bin",
+                codex,
+                "--codex-home",
+                str(codex_home),
+                "--disable",
+            ]
+            disable_preview = run(native_disable, cwd=project, env=env)
+            if "Dry run only" not in disable_preview.stdout:
+                raise SmokeFailure("Native disable preview was not non-mutating")
+            run([*native_disable, "--apply"], cwd=project, env=env)
+            disabled_config = (codex_home / "config.toml").read_text(
+                encoding="utf-8"
+            )
+            if "[codex-orchestration managed-policy" in disabled_config:
+                raise SmokeFailure("Managed native policy remained after disable")
+            if "tool_namespace" in disabled_config:
+                raise SmokeFailure("Pre-setup namespace absence was not restored")
+            if (codex_home / ".codex-orchestration-routing.json").exists():
+                raise SmokeFailure("Native restore state remained after disable")
+
             remove_roles_command = [
                 sys.executable,
                 str(configurator),
                 "--scope",
-                "project",
+                "personal",
                 "--root",
                 str(project),
+                "--codex-home",
+                str(codex_home),
+                "--personal-route-names",
                 "--remove-saved-roles",
             ]
             remove_preview = run(remove_roles_command, cwd=project, env=env)
@@ -516,7 +601,7 @@ def main() -> int:
 
     print(
         f"PASS: installed {OLD_VERSION}, upgraded to {current_version}, "
-        "discovered the plugin, verified its cache, and ran setup plus cleanup"
+        "verified its cache, and ran native plus custom setup/status/cleanup"
     )
     return 0
 

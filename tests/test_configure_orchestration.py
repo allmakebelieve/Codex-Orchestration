@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext, redirect_stderr, redirect_stdout
 import getpass
+import hashlib
 import importlib.util
 from io import StringIO
 import json
@@ -578,6 +579,49 @@ multi_agent = true
                 '[model_providers.anthropic]\nname = "Configured elsewhere"\nbase_url = "https://example.test"\n',
             )
             self.assertNotIn("base_url", executor.read_text(encoding="utf-8"))
+
+    def test_personal_route_names_are_stable_and_distinct_from_project_roles(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            codex_home = root / "personal-codex"
+            result, stdout, _ = self.run_main(
+                root,
+                "--scope",
+                "personal",
+                "--codex-home",
+                str(codex_home),
+                "--personal-route-names",
+                "--apply",
+                codex_home_env=codex_home,
+            )
+
+            self.assertEqual(result, 0)
+            suffix = hashlib.sha256(os.fsencode(str(codex_home.resolve()))).hexdigest()[:12]
+            expected_name = f"codex_orchestration_executor_{suffix}"
+            expected_file = (
+                codex_home
+                / "agents"
+                / f"codex-orchestration-executor-{suffix}.toml"
+            )
+            self.assertTrue(expected_file.is_file())
+            parsed = tomllib.loads(expected_file.read_text(encoding="utf-8"))
+            self.assertEqual(parsed["name"], expected_name)
+            self.assertNotEqual(parsed["name"], CONFIGURE.DEFAULT_EXECUTOR_NAME)
+            self.assertIn(f"Executor agent name: {expected_name}", stdout)
+
+            removed, _, _ = self.run_main(
+                root,
+                "--scope",
+                "personal",
+                "--codex-home",
+                str(codex_home),
+                "--personal-route-names",
+                "--apply",
+                codex_home_env=codex_home,
+                remove_saved_roles=True,
+            )
+            self.assertEqual(removed, 0)
+            self.assertFalse(expected_file.exists())
 
     def test_personal_unknown_provider_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

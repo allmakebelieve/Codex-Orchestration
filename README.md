@@ -1,234 +1,278 @@
 # Codex-Orchestration
 
-One model leads. An optional second model challenges the plan. A faster or cheaper model can handle well-scoped execution work.
+Use your strongest model where judgment matters. Let a faster, cheaper model handle the execution work that consumes most of the context and usage.
 
-The important part: **the model you selected when you started the Codex task is already the orchestrator.** This plugin never asks you to configure another one.
+The model you select when you start a Codex task is already the orchestrator. If you start with GPT-5.6 Sol Extra High, Sol plans, delegates, reviews, and answers. You only choose the executor and, if you want one, an advisor.
 
-Codex-Orchestration builds on Codex's own skills, subagents, and custom agents.
+Set it up once. After that, use Codex normally—no skill tag in every prompt.
 
-## Install once
+## Install
 
 ```bash
 codex plugin marketplace add Cjbuilds/Codex-Orchestration
 codex plugin add codex-orchestration@codex-orchestration
 ```
 
-Start a new Codex task after installation.
+Start a new Codex task after installation. In the desktop app, type `/` and choose **Codex Orchestration**. You can also choose it with `$`; CLI and IDE users can find it through `/skills` or `$`.
 
-## Use it
+Setup uses a small standard-library helper and requires Python 3.11 or newer. Codex uses `python3` on macOS/Linux or an available `py -3.11`/`python` launcher on Windows.
 
-In the Codex desktop app, type `/` and select **Codex Orchestration** when it appears. You can also type `$` and choose the skill, or use `@` to select the plugin and its bundled skill.
+The picker is the source of truth for the exact label. Depending on the client, it may appear as `/codex-orchestration`, `$codex-orchestration`, or `$codex-orchestration:codex-orchestration`.
 
-For the smoothest task-local run, include the work in the same prompt:
+## Set it up once
+
+For a Sol orchestrator and Luna executor:
 
 ```text
-/codex-orchestration executor: GPT-5.6 Luna xhigh, advisor: none — implement the authentication changes below.
+/codex-orchestration setup executor: GPT-5.6 Luna Extra High
 ```
 
-In CLI or IDE, open `/skills` or type `$`, then choose the name your client shows. A plugin install currently appears as:
+That is the normal setup. The skill resolves the friendly `Extra High` label to Codex's `xhigh` effort ID. If you leave out the advisor, it means `advisor: none`; Codex does not ask a second unnecessary question.
+
+This direct quickstart assumes the Sol root and Luna executor are available through the same OpenAI provider. Direct child model overrides keep the root provider; use the custom-agent path below when providers differ.
+
+Add a second-opinion model when the extra review is worth it:
 
 ```text
-$codex-orchestration:codex-orchestration executor: GPT-5.6 Luna xhigh, advisor: none — fix the failing tests.
+/codex-orchestration setup executor: GPT-5.6 Luna Extra High, advisor: GPT-5.6 Terra high
 ```
 
-The exact qualified label is client-generated, so the picker is the source of truth.
+Codex resolves the display names against the active model catalog, previews the personal config change, checks the active binary plus the known PATH/Desktop clients, and applies the clean setup. Pass any other installation to the configurator with `--compat-bin`. It never changes the model selected for the current task.
 
-If you call the skill without settings and have no saved roles, Codex asks once for the missing choices. It gives you a ready-to-copy invocation like this:
+Then start a new task, select the model you want as orchestrator, and work normally:
 
 ```text
-/codex-orchestration executor=<model>@<effort-or-auto>, advisor=<model>@<effort-or-auto>|none — <your task>
+Implement the authentication changes and run the relevant tests.
 ```
 
-Send that full line with your choices and task. A bare answer such as `Luna xhigh` may not reload this explicit-only skill. Codex reuses the exact `/` or `$` label your client showed, keeps the original task, and leaves placeholders only for choices you still need to fill. If your first request also said `save for this project`, `save personally`, or made a role required/best-effort, it keeps that wording too.
+You do not invoke Codex Orchestration again for ordinary work. The saved policy is already part of Codex's multi-agent flow.
 
-Already supplied the executor? Codex asks only whether you want an advisor. It never asks for an orchestrator. `Extra High` is normalized to `xhigh`. For a task-local request, `auto` means “do not force an effort”; the host may inherit the session effort or choose another effective value. A saved role resolves `auto` to a concrete supported default before writing.
-
-## What happens when you call it?
-
-Codex first reports the routing status of each requested role:
+Useful controls:
 
 ```text
-Codex Orchestration
-Orchestrator: current task model — active
-Executor: gpt-5.6-luna@xhigh — unverified prompt preference
-Advisor: none
-Delegation: allowed when useful, never forced
+/codex-orchestration status
+/codex-orchestration setup executor: GPT-5.6 Terra high
+/codex-orchestration disable
 ```
 
-The skill keeps a requested setup separate from what actually ran:
+Running `setup` again changes the default. `disable` restores the values that existed before setup and leaves unrelated Codex settings alone.
 
-| State | What it means |
-| --- | --- |
-| **Unverified prompt preference** | Codex steers a child toward that model for this request. It is not an exact route until the client confirms it. |
-| **Pinned custom agent available** | A loaded saved agent sets the child model and effort. It has not run yet, and stronger live client overrides can still win. |
-| **Inherited root** | The child used the orchestrator model; the requested child model was not used. |
+`status` distinguishes a policy that is merely installed from one that is effective in the current workspace. It cannot infer the selected task model's multi-agent version, so start the new task with a current v2 root such as Sol or Terra.
 
-The other honest outcomes are `live route available`, `used and confirmed`, and `unavailable`. The skill never reports a model as used merely because you typed its name.
-
-Choosing an executor does not force Codex to use one. If the route is unavailable, Codex says so and can still handle simple or root-owned work itself. If you explicitly require that executor route, it pauses instead of silently substituting the orchestrator model. Supplying an advisor makes its review a gate for a meaningful plan unless you mark that review best-effort.
-
-## The flow
+For one task only, use an inline override without changing the saved default:
 
 ```text
-         You choose a model and start a Codex task
-                            |
-                            v
-                ORCHESTRATOR (already selected)
-             understands | plans | makes decisions
-                            |
-                   Is the work simple?
-                    /              \
-                  yes               no
-                  |                  |
-       ORCHESTRATOR does it      Advisor configured?
-                  |               /             \
-                  |             no               yes
-                  |             |         ADVISOR checks plan
-                  |             |                 |
-                  |             |        ORCHESTRATOR reviews
-                  |             |        advice; revises if needed
-                  |             |                 |
-                  |             +--------+--------+
-                  |                      |
-                  |           Would delegation help?
-                  |               /             \
-                  |             no               yes
-                  |             |                 |
-                  |    ORCHESTRATOR works    EXECUTOR receives
-                  |                           bounded slice(s)
-                  |             |                 |
-                  +-------------+-----------------+
+/codex-orchestration executor: GPT-5.6 Terra high — fix the failing tests below.
+```
+
+## What it feels like
+
+```text
+         Start a normal Codex task with GPT-5.6 Sol Extra High
                                 |
                                 v
-                  ORCHESTRATOR integrates if needed,
-                       verifies and answers you
+                    SOL IS THE ORCHESTRATOR
+              understand | plan | decide | delegate
+                         /                 \
+                        /                   \
+            Simple or tightly          Non-trivial plan and
+              coupled work              advisor configured
+                  |                            |
+                  v                            v
+             Sol handles it            ADVISOR checks the plan
+                                               |
+                                               v
+                                      Sol accepts or fixes advice
+                                               |
+                         +---------------------+
+                         |
+                         v
+                Bounded execution would help?
+                         /                 \
+                       no                   yes
+                       |                     |
+                       v                     v
+                  Sol continues       LUNA / TERRA executor(s)
+                                      build bounded slice(s)
+                         \                 /
+                          +-------+-------+
+                                  |
+                                  v
+                       SOL REVIEWS AND INTEGRATES
+                         verifies | answers you
 ```
 
-Codex decides whether the task needs a plan, whether a subagent would help, how many independent slices exist, and whether work is safe to run in parallel. Invoking this skill gives Codex permission to delegate when useful; it does not require delegation.
+Codex still decides whether a plan is useful, whether to delegate, how many independent slices exist, and what can run safely in parallel. Plan and Goal behavior stay exactly where they already live in Codex.
 
-If you explicitly say “no subagents,” that wins.
+“Use Luna for execution” means the saved policy supplies the Luna route for every executor that Codex chooses to delegate to. It does not force a subagent for a one-line change, or stop the root from doing tightly coupled work. Forcing every edit through another agent would add overhead and work against Codex's own judgment.
 
-## The three roles, in plain English
+If you say `no subagents`, that wins.
+
+## The three roles
 
 ### Orchestrator: the lead
 
-This is the current task model. It understands what you want, makes the important tradeoffs, breaks down the work when useful, chooses what to delegate, and owns the final answer.
+This is simply the model you selected for the task. It understands the request, makes the important decisions, decides whether delegation helps, integrates every handoff, runs final verification, and owns the answer.
 
-It also reviews every executor handoff. Executors do not merge their own conclusions into the final result.
+Codex-Orchestration never asks you to configure a second top-tier orchestrator.
 
-### Advisor: a second pair of eyes
+### Advisor: the second opinion
 
-The advisor is optional. For a meaningful plan, it checks for missed requirements, risky assumptions, shallow executor tasks, overlapping file ownership, and weak verification.
+The advisor is optional. It sees a self-contained packet containing the requirements, repository facts, plan, proposed executor slices, risks, acceptance criteria, and verification checks.
 
-It reports only to the orchestrator. It does not assign work to executors or supervise them. A task-local advisor is **review-only by instruction**. A saved advisor also requests a read-only Codex sandbox, although the live parent permission mode can override child defaults.
-
-Its first line is one of:
+It looks for missed requirements, bad assumptions, shallow tasks, overlapping file ownership, unsafe parallel work, and weak tests. It reports only to the orchestrator—never to an executor—and begins with one of these signals:
 
 ```text
 PLAN_APPROVED   No material gap was found in the supplied plan.
-PLAN_REVISE    Material gaps were found; concise fixes follow.
+PLAN_REVISE    Material gaps were found; prioritized fixes follow.
 ```
 
-The orchestrator decides which advice to accept and revises its own plan. One confirmation pass is allowed after a material revision; there is no endless critic loop.
+The orchestrator decides which advice to use. The advisor does not become a second boss, rewrite the plan behind the root's back, or supervise workers.
 
-A different model family can provide a useful second lens, but cross-provider routing must already be configured before the task starts. Installing this plugin does not grant access to another provider.
+When configured, advisor review is a gate for a non-trivial executor plan unless the user explicitly says `advisor best-effort`. An unavailable or malformed advisor response is never treated as approval.
 
 ### Executor: the builder
 
-An executor gets a bounded handoff: the objective, relevant context, constraints, owned files, acceptance criteria, and verification command.
+An executor receives one bounded task packet: objective, relevant context, constraints, owned files, dependencies, acceptance criteria, and the smallest useful verification command.
 
-The executor may make local implementation decisions inside that slice. It does not redesign the whole plan, contact the advisor, spawn another team, or broaden the scope. It returns the changed files, the checks it ran, and any remaining risk to the orchestrator.
+It implements that slice and reports changed files, checks, blockers, and remaining risks to the orchestrator. It does not contact the advisor, broaden the project, or spawn another team.
 
-Codex should parallelize only genuinely independent work. Write-heavy slices need non-overlapping ownership; tightly coupled changes stay sequential or with the orchestrator.
+## How the one-time config works
 
-## Save roles for future tasks
+Codex-Orchestration does not add a proxy or invent a new scheduler. It configures the current Codex multi-agent tool.
 
-Task preferences are convenient, but they are not a durable team configuration. If you want exact reusable model pins, ask the skill to save them:
+The managed part of `~/.codex/config.toml` is conceptually this small:
 
-```text
-/codex-orchestration executor: GPT-5.6 Luna xhigh, advisor: none, save for this project
+```toml
+[features.multi_agent_v2]
+hide_spawn_agent_metadata = false
+tool_namespace = "agents"
+
+multi_agent_mode_hint_text = """
+The current task model is the root orchestrator. Codex decides when delegation
+helps. Routed children stay bounded and never spawn descendants.
+"""
+
+usage_hint_text = """
+For executor work, spawn model = "gpt-5.6-luna",
+reasoning_effort = "xhigh", fork_turns = "none".
+Never silently substitute the root model.
+"""
 ```
 
-The skill previews the files before applying them. Project scope creates only:
+The real generated text also carries the advisor rules, task-packet contract, user-override rules, and an ownership marker used for safe updates and removal.
 
-```text
-.codex/agents/codex-orchestration-executor.toml
-.codex/agents/codex-orchestration-advisor.toml   # only when configured
+Four details matter:
+
+1. `hide_spawn_agent_metadata = false` exposes the per-spawn `model`, `reasoning_effort`, `agent_type`, and service-tier inputs. It does not choose a child model.
+2. `tool_namespace = "agents"` puts the configurable v2 team tools under `agents`. In the Desktop build live-tested on July 10, 2026 (`0.144.0-alpha.4`), the reserved `collaboration.spawn_agent` schema rejected the expanded model/effort route; `agents` accepted it and spawned Luna at `xhigh`. This is a control-surface setting, not an executor selector.
+3. `usage_hint_text` puts the chosen Luna or Terra route directly on Codex's spawn tool. This is what tells the root which model and effort to request for delegated execution.
+4. Codex-Orchestration deliberately uses `fork_turns = "none"` for every different child route. Full-history forks inherit the root and reject overrides; Codex can also accept a positive partial fork, but `none` avoids copied history and requires a deliberate self-contained packet.
+
+The installer writes those values through Codex App Server's own `config/read` and atomic `config/batchWrite` APIs. That preserves unrelated tables, comments, inline comments, and custom multi-agent limits; validates the complete config; and detects concurrent edits. The policy takes effect in new tasks. A small namespaced state file records its schema, config path, selected seats, the four managed values, and the exact pre-setup snapshots needed by `disable`; it uses restrictive file permissions where supported. A normal clean setup contains generated policy text, the namespace value, seat IDs, and that restoration metadata. If you explicitly replace your own hint text, its exact old value must be kept for restoration—so never put credentials in routing hints.
+
+The setup sets `tool_namespace = "agents"` because the currently validated Desktop route needs that namespace for expanded child-model controls. It changes the callable namespace; it does not name Luna, force a spawn, or replace Codex's delegation judgment.
+
+The setup also does **not** force `enabled = true` for a Sol or Terra root. Current Sol and Terra model metadata already selects multi-agent v2. Forcing the feature globally can produce an under-development warning and can conflict with older `agents.max_threads` configuration.
+
+## Is config alone enough?
+
+Yes—the full policy becomes the saved routing default for later tasks that use a v2 root and do not override it with a higher-precedence config layer. Codex still decides whether to delegate, and exact child use is confirmed only by runtime evidence. That is the point of the one-time setup.
+
+But these two lines alone are not an executor configuration:
+
+```toml
+[features.multi_agent_v2]
+hide_spawn_agent_metadata = false
+tool_namespace = "agents"
 ```
 
-These are namespaced, standalone Codex custom agents. Normal setup does **not** edit `.codex/config.toml`, does not change your root model, and does not change `agents.max_threads` or `agents.max_depth`.
+Those two lines configure the control surface used by the currently validated Desktop build: spawn metadata is visible and the v2 tools live under `agents`. They still do not configure an executor. Neither says “use Luna.” Neither line names an effort, a fork mode, or any root/child rule. Without `usage_hint_text`, no persistent default tells Sol to request Luna when it delegates, so the root can still spawn its inherited model.
 
-Save project roles at the workspace or repository root and make sure Codex trusts that project. Start a new task after saving. In future tasks, invoke Codex Orchestration with your work; the skill can use the loaded saved roles without asking for their models again.
+The full generated policy adds the missing model route, effort, fork mode, root/child boundaries, advisor behavior, and failure rule. The skill is the setup and control plane: it resolves real model IDs, validates compatibility, installs safely, reports status, supports an advisor, handles cross-provider custom agents, and reverses its own changes. It is not consuming tokens in every later task.
 
-A saved scope is one complete team. With a managed project executor, a missing project advisor file means saved `advisor: none`; Codex does not pull in a personal advisor behind your back. It checks a personal saved team only when no project team exists. If both scopes define the same agent name, it reports the collision instead of guessing which one Codex loads.
+One honest boundary remains: Codex has no global `executor_model = ...` engine switch today. Same-provider config routing is strong tool-level guidance plus a runtime-validated `model` argument, not a new hardcoded scheduler. When the spawn tool accepts an exact route, Codex has validated the requested model and effort; call that `route accepted`. Call a model `used and confirmed` only when the client explicitly exposes effective runtime metadata. A namespaced custom agent provides the stronger persistent pin needed for cross-provider routing.
 
-Inline choices win for the current invocation. `advisor: none` disables a saved advisor for that request without deleting its file.
+## Current compatibility
 
-The saved model is a Codex configuration pin, not permission to make a false runtime claim. A stronger live client override can take precedence, so the skill still confirms the actual child route when the client exposes it.
+| Situation | Behavior |
+| --- | --- |
+| Current Codex with a Sol or Terra root | One-time native policy; use Codex normally afterward. |
+| Desktop `0.144.0-alpha.4`, live-tested July 10, 2026 | `agents` accepted `model=gpt-5.6-luna` plus `reasoning_effort=xhigh`; the default `collaboration` namespace rejected the expanded schema. Capability-test other builds. |
+| Luna selected as the root | Luna currently declares multi-agent v1, so the v2 policy is not the right root route. Luna is best used here as a child of a Sol/Terra v2 root. |
+| Older Codex that rejects `multi_agent_mode_hint_text` | The installer refuses to break its shared config and keeps the per-task skill fallback available. Update that client before enabling the persistent preset. |
+| OpenAI root and OpenAI executor | Direct per-spawn model route; simplest setup. |
+| Different provider for advisor or executor | Use a loaded, namespaced custom agent with an already configured provider. |
 
-Personal scope is also available, but Codex asks for explicit approval because it affects every project. The plugin never writes credentials or creates provider definitions.
+Desktop and CLI normally share `~/.codex/config.toml`. The setup asks the target binary, the `codex` on your PATH, and the Desktop binary when present to parse the complete four-field preset in an isolated home. That proves config compatibility, not a live child route. Report `route accepted` or `used and confirmed` only from the exact runtime evidence described above; the installer does not guess compatibility from a version number.
 
-If an older Codex-Orchestration release is detected, migration is opt-in. The configurator previews backups and removes only files whose complete contents prove that this project created them. Unknown or edited files are left for manual review.
+A trusted project's `.codex/config.toml` or a managed layer can override the personal preset in that workspace. Run `status` from the target project; setup rolls back if the policy is already overridden there, but another project can have different higher-precedence settings.
 
-<details>
-<summary>Persistence safety and Windows note</summary>
+Named Codex profiles (`codex --profile ...`) are separate user layers. The one-command setup manages the default user config; a profile can override it. If you rely on named profiles, inspect that profile separately or use the task-local fallback instead of assuming the base policy wins.
 
-Writes are staged and journaled. If the process is interrupted between file swaps, the next approved save restores the old set or finishes cleanup of a fully committed set before doing new work. The journal stores paths, hashes, and file identities—not config contents or credentials.
+Do not use Codex Fast mode when the goal is maximum allowance savings. A supported child may inherit the root's priority service tier, which can reduce the saving even when the child model is Luna.
 
-Run saves only in a trusted workspace. The configurator rejects symlinks, hard links, and ordinary concurrent changes it observes, but it is not a sandbox against another hostile process running as the same OS user and deliberately swapping parent directories during the save.
+## Older-client fallback
 
-On Windows, creating saved roles is supported with Python 3.11+ (`py -3.11` or another available Python launcher). This release intentionally refuses automated updates or removals of existing managed files because it cannot yet preserve and verify custom NTFS security descriptors. Review and replace those files manually instead of bypassing the check.
-
-</details>
-
-## Using an advisor from another provider
-
-A first-time inline request cannot switch providers by itself. For example, an Anthropic advisor needs an existing authenticated, Codex-compatible provider and a personal custom agent loaded before the task starts.
-
-Configure and test that provider separately using [Codex's custom-provider guide](https://learn.chatgpt.com/docs/config-file/config-advanced#custom-model-providers). Codex custom providers currently use the Responses wire protocol; a native Anthropic Messages endpoint and key are not interchangeable. A supported integration such as the built-in Amazon Bedrock provider may be another route.
-
-Ask the skill to save it, confirm the existing provider ID, review the preview, and then start a new task:
+If a client cannot load the persistent policy, invoke the skill with the work in the same prompt:
 
 ```text
-/codex-orchestration executor: GPT-5.6 Luna xhigh, advisor: Anthropic Fable 5 xhigh, save personally
+/codex-orchestration executor: GPT-5.6 Luna Extra High — implement the requested feature.
 ```
 
-Model display names are examples, not hardcoded aliases. Codex resolves exact IDs from the host that will execute the work and asks when a name is ambiguous. An API model ID alone does not prove that your Codex client can use it.
+The skill uses the strongest child control that client exposes. On current v2 surfaces it passes the exact model and effort with `fork_turns = "none"`. If exact routing is unavailable, it says so. It never counts an inherited-root child as the requested executor.
 
-## Can this save about 65%?
+## Advisor or executor from another provider
 
-**It can reduce Codex credit consumption by about 65% in an executor-heavy example. It does not remove 65% of the raw tokens.**
+A model name alone cannot create provider access. An Anthropic advisor, for example, needs an existing authenticated Codex-compatible provider plus a personal custom agent loaded before the task starts.
 
-OpenAI's [published token credit rates](https://learn.chatgpt.com/docs/pricing#what-are-tokens-and-credits), checked July 9, 2026, price GPT-5.6 Luna at 20% of GPT-5.6 Sol for input, cached input, and output tokens. If 20% of a comparable token mix stays with Sol and 80% moves to Luna:
+Codex custom providers use the Responses wire protocol. A raw Anthropic Messages endpoint and key are not interchangeable. A supported route such as Amazon Bedrock may also be appropriate.
+
+Once the provider is configured and tested, setup can save the namespaced roles:
+
+```text
+/codex-orchestration setup executor: GPT-5.6 Luna Extra High, advisor: Fable 5 Extra High, advisor provider: <existing-provider-id>
+```
+
+For this path, Codex-Orchestration creates only:
+
+```text
+~/.codex/agents/codex-orchestration-executor-<personal-id>.toml
+~/.codex/agents/codex-orchestration-advisor-<personal-id>.toml
+```
+
+The matching role names carry the same stable, `CODEX_HOME`-specific suffix. That prevents older project-scoped Codex-Orchestration roles from accidentally shadowing the personal route. Setup verifies the personal files and refuses a same-name project collision in the current workspace.
+
+It never writes credentials or creates a provider definition. See [Codex custom providers](https://learn.chatgpt.com/docs/config-file/config-advanced#custom-model-providers).
+
+Project-scoped custom agents remain available for teams that want inspectable role files in a trusted repository. Project roles have higher precedence, so a deliberately duplicated personal role name can shadow a global agent route. Run `status` in the project before relying on a custom-agent preset.
+
+## Can it save about 65%?
+
+It can save roughly 65% of **model-weighted Codex credits** in an executor-heavy example. It cannot promise 65% fewer raw tokens.
+
+OpenAI's published token credit rates, checked July 9, 2026, price GPT-5.6 Luna at 20% of GPT-5.6 Sol for input, cached input, and output. If 20% of a comparable token mix stays with Sol and 80% moves to Luna:
 
 ```text
 relative credits = 0.20 + (0.80 × 0.20) = 0.36
 illustrative reduction                         = 64%
 ```
 
-That is the basis for “about 65%.” It is a scenario, not a guarantee. Advisor calls, duplicated context, retries, tools, and extra subagent work add overhead and can reduce or erase the saving. OpenAI explicitly notes that subagent workflows use more total tokens than comparable single-agent runs.
+That is the “about 65%” claim. In practice, the orchestrator still pays for planning, review, integration, and verification. Advisor calls, copied context, retries, tools, and unnecessary agents add overhead. Multi-agent work can use more raw tokens even while consuming fewer high-end-model credits.
 
-OpenAI's current Plus ranges also list 15–90 Sol messages and 50–280 Luna messages per shared five-hour window. Those ranges show why smaller models can make limits last longer; they are not interchangeable per-message units or a promise of 3× completed work. Additional weekly limits may apply.
+Lower model-weighted credits can make shared five-hour and applicable weekly allowances last longer, but the extension depends on the workload, plan, context, service tier, and real delegation mix; it is not guaranteed.
 
-Keep the claims separate:
+The benefit is simple: you do not need the frontier model for every stage. A robust plan plus a capable coding model can handle much of the execution volume, while the strongest model checks the result before it reaches you.
 
-- Fewer **credits for the same token mix** can be estimated from the published rate card.
-- Fewer **raw tokens** are not guaranteed; multi-agent work often uses more.
-- Included **five-hour or weekly allowance** depends on the real task, context, reasoning, tools, caching, and plan.
-- A different provider has its own allowance or bill.
+## What it never changes
 
-## What this plugin deliberately does not do
-
-- It does not configure a second orchestrator.
-- It does not add a second scheduler or provider proxy.
-- It does not force three, five, or any fixed number of agents.
-- It does not create or change a Goal. It works inside a Goal the user already started.
-- It does not replace Codex planning, permissions, approvals, or verification.
-- It does not let executors coordinate around the orchestrator.
-- It does not claim a requested model ran until the client accepts or confirms the route.
-- It does not ask for API keys in chat or commit credentials to the project.
-
-This restraint follows the central lesson from Anthropic's orchestrator-worker work: let the lead model choose task-specific slices, keep worker boundaries clear, synthesize results centrally, and add multi-agent complexity only when it materially helps.
+- The current task model remains the only orchestrator.
+- Codex still decides whether to plan, delegate, or work directly.
+- No fixed three-agent or five-agent swarm is created.
+- Goal state is not created or changed by this plugin.
+- Executors never coordinate around the orchestrator.
+- Permissions, approvals, tools, hooks, and credentials are not weakened.
+- An accepted route is not reported as a confirmed runtime model unless the client exposes that metadata.
 
 ## Update
 
@@ -237,63 +281,44 @@ codex plugin marketplace upgrade codex-orchestration
 codex plugin add codex-orchestration@codex-orchestration
 ```
 
-Start a new task after updating so Codex loads the new skill and any saved agents.
+Start a new task so Codex loads the updated skill. Run `/codex-orchestration status` to inspect an existing native preset; run `setup` again to update its managed policy.
 
-If you saved roles with version 0.1 or 0.2, invoke the updated skill with complete current choices, the original scope, and `migrate legacy`. For example:
-
-```text
-/codex-orchestration executor: GPT-5.6 Luna xhigh, advisor: none, save for this project, migrate legacy
-```
-
-It detects the old files, shows the migration preview, and asks for approval before changing them. Start a new task afterward so Codex loads the migrated agents.
-
-Migration does not guess what your root settings were before an older release. It preserves any old root model, provider, effort, and `agents.max_*` values in `.codex/config.toml`; review those manually if a prior release changed them.
-
-See [CHANGELOG.md](CHANGELOG.md) for release notes.
+Custom agents created by versions 0.1–0.3 remain supported. The older backup-first migration command is still available when exact legacy output is detected; edited or user-owned files are never guessed at or deleted.
 
 ## Uninstall
 
-Remove saved roles before removing the plugin:
+First disable the persistent policy:
 
 ```text
-/codex-orchestration remove saved roles for this project
+/codex-orchestration disable
 ```
 
-Use `/codex-orchestration remove saved roles personally` as a separate, explicitly approved action if you created a personal team. The skill previews both removals and deletes only its fully validated namespaced files. On Windows, where automated removal of existing files is intentionally blocked, manually review and remove these exact project files—or their `~/.codex/agents/` personal equivalents—instead:
+If you created cross-provider or project custom agents, use `/codex-orchestration remove custom roles personally` or ask it to remove the roles for the current project. It previews the removal and deletes only fully validated namespaced files, including the home-specific v0.4 names when present.
 
-```text
-.codex/agents/codex-orchestration-executor.toml
-.codex/agents/codex-orchestration-advisor.toml
-```
-
-If you previously used version 0.1 or 0.2, follow the migration step above first—or manually review its legacy output—before removing the current roles. Preserved `.codex/config.toml` settings and `.bak.codex-orchestration` migration backups are intentionally never guessed at or auto-deleted.
-
-Then uninstall:
+Then remove the plugin:
 
 ```bash
 codex plugin remove codex-orchestration@codex-orchestration
 codex plugin marketplace remove codex-orchestration
 ```
 
-Uninstalling the plugin itself does not silently delete saved project or personal agent files. Start a new task after cleanup so already loaded agents disappear from task state.
+Uninstalling the plugin does not silently delete a policy or custom-agent file that may still affect future tasks.
 
 ## Develop and validate
-
-From a cloned checkout:
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
 
-The test suite covers packaging, generated-agent contracts, safe migration, dry runs, idempotency, conflicts, provider boundaries, symlinks, and transactional rollback. Release testing also performs isolated marketplace install and update checks.
-
-CI additionally installs the real Codex CLI in a temporary home, installs version 0.2 from a disposable Git marketplace, runs the real marketplace upgrade to 0.3, verifies discovery and cached contents, runs the installed configurator, and removes the test installation.
+The suite covers the native App Server protocol, capability detection, generated policy contract, setup/status/disable, exact restoration, custom agents, packaging, migration safety, model inspection, and an isolated real-CLI marketplace lifecycle.
 
 ## Design sources
 
+- [OpenAI: Subagents and custom agents](https://learn.chatgpt.com/docs/agent-configuration/subagents)
+- [OpenAI: Codex App Server](https://learn.chatgpt.com/docs/app-server)
+- [OpenAI: Codex configuration](https://learn.chatgpt.com/docs/config-file/config-reference)
 - [OpenAI: Build skills](https://learn.chatgpt.com/docs/build-skills)
 - [OpenAI: Build plugins](https://learn.chatgpt.com/docs/build-plugins)
-- [OpenAI: Subagents and custom agents](https://learn.chatgpt.com/docs/agent-configuration/subagents)
 - [OpenAI: Codex pricing and usage limits](https://learn.chatgpt.com/docs/pricing)
 - [Anthropic: Building effective agents](https://www.anthropic.com/engineering/building-effective-agents)
 - [Anthropic: How we built our multi-agent research system](https://www.anthropic.com/engineering/multi-agent-research-system)

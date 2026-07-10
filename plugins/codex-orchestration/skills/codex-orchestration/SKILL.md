@@ -1,197 +1,278 @@
 ---
 name: codex-orchestration
-description: Explicitly keep the current Codex task model as orchestrator, require an executor choice for eligible delegated work, and optionally obtain a review-only second opinion on a non-trivial plan. Use when the user selects Codex Orchestration or invokes it with executor/advisor settings; never replace Codex planning, Goal, delegation, integration, or verification behavior.
+description: Configure or use Codex's current task model as the root orchestrator with a chosen efficient executor and optional root-only plan advisor. Use when the user invokes Codex Orchestration to set up, inspect, change, disable, or temporarily override multi-model subagent routing. Preserve Codex's own planning, Goal, delegation, integration, and verification behavior.
 ---
 
 # Codex Orchestration
 
-Keep the model already selected for the current Codex task in charge. Add advisor and executor model choices around Codex's existing subagent workflow; do not build a second orchestration system.
+The model selected when this Codex task started is already the orchestrator. Never ask the user to configure another one and never change the root model on this skill's behalf.
 
-## Parse the request
+This skill adds a model route to Codex's existing multi-agent flow. It does not create another scheduler.
 
-Accept natural invocations such as:
+## Understand the command
 
-```text
-/codex-orchestration executor: GPT-5.6 Luna xhigh, advisor: none — implement the requested feature
-$codex-orchestration executor=gpt-5.6-luna@auto, advisor=gpt-5.6-terra@high — review and fix this branch
-```
-
-Use the exact skill label shown by the client. Desktop users can select the skill from `/`, `$`, or the plugin picker. CLI and IDE users can select it through `/skills` or `$`. Treat `/codex-orchestration` as a convenient Desktop example, not a universal alias.
-
-An executor choice is required; actually using an executor is not. The advisor is optional, but require either a model or explicit `none`. Before resolving seats, report a collision if project and personal scopes define the same custom-agent `name`; do not guess Codex's load precedence. Then resolve values in this order:
-
-1. Use inline values from this invocation.
-2. If a fully managed project executor is loaded, treat project scope as one complete saved team. Use its advisor when present; a missing namespaced advisor means saved `advisor: none`. Do not merge in a personal advisor.
-3. Otherwise do the same with a fully managed personal executor. An advisor file without its same-scope managed executor is incomplete state; report it instead of guessing.
-4. Ask once for only the still-missing values.
-
-`remove saved roles for this project` and `remove saved roles personally` are configuration-control requests, not work-routing invocations. They do not require executor/advisor values and may remove the explicitly named scope even when that removal is what resolves a cross-scope name collision. Personal removal still requires explicit approval.
-
-When asking, give a ready-to-copy invocation because this skill is explicit-only and may not reload from a bare reply:
+Support four simple forms:
 
 ```text
-<exact-skill-label> executor=<model>@<effort-or-auto>, advisor=<model>@<effort-or-auto>|none — <original task>
+/codex-orchestration setup executor: GPT-5.6 Luna Extra High
+/codex-orchestration status
+/codex-orchestration disable
+/codex-orchestration remove custom roles personally
+/codex-orchestration executor: GPT-5.6 Terra high — <one task only>
 ```
 
-Reuse the exact label that invoked the skill (`/…`, `$…`, or the client-qualified plugin label), preserve supplied seat values, and insert placeholders only for missing seats. Preserve the original task text and every understood modifier, including `save for this project`, `save personally`, required/best-effort routing, migration, and explicit subagent constraints. Do not lose the user's work, persistence, or gating intent merely because a value was missing.
+`setup` installs or updates the personal one-time routing policy. `status` inspects it. `disable` restores its pre-setup values. `remove custom roles` cleans only verified agent files and does not require seat values. An invocation with seats and work but no control verb is a current-task override and must not rewrite config.
 
-Inline values override saved choices only for the current request; they do not rewrite files unless the user also says `save` or `persist`.
+The executor is required for setup or a task-local override. The advisor is optional: if omitted, it means `advisor: none`. Do not ask a separate advisor question unless the user asks for help choosing one.
 
-If an old invocation includes `orchestrator:`, explain that the current task model already owns that role. Never switch, persist, or ask for another orchestrator. If the client exposes the active model, report it; otherwise say `current task model`.
-
-Normalize `Extra High` to `xhigh`. For task-local routing, `auto` means no explicit effort override; the host may use an inherited session effort or another host-resolved value. For saved agents, resolve `auto` to the selected model's concrete catalog default before writing. Resolve display names to exact IDs only from the executing host, its picker or catalog, an already loaded custom agent, or official provider documentation. Ask for an exact ID when ambiguous. Never invent a model ID.
-
-Apply task-local choices to the work included in this invocation. Do not promise that the skill created a durable, mutable team setting for later turns. For reusable behavior, save custom agents and start a new task.
-
-Read [providers-and-models.md](references/providers-and-models.md) when routing is unavailable, a model is absent from the local catalog, providers differ, saved roles are requested, or host capabilities disagree.
-
-## Preserve Codex behavior
-
-The current task model remains the root. It owns intent, planning, architecture, decomposition, delegation, integration, review, and final verification.
-
-Invoking this skill authorizes Codex to use its native subagents when Codex independently judges delegation materially useful. It does not require a spawn, set a worker count, or override an explicit `no subagents` instruction.
-
-Let the root decide how much internal planning is useful and whether work is safely delegable. Do not create or change Goal state because this skill is active. If the user already started a Goal, apply the same advisor and executor choices inside it.
-
-Never create a second orchestrator, fixed swarm, nested executor team, replacement planning loop, or parallel-write policy. Never change `agents.max_threads`, `agents.max_depth`, permissions, approvals, hooks, tools, authentication, or provider credentials.
-
-## Establish the route honestly
-
-Use the strongest route the current client actually supports:
-
-1. Prefer a loaded, namespaced `codex_orchestration_advisor` or `codex_orchestration_executor` custom agent whose saved model and effort match the requested seat.
-2. Otherwise use an accepted task-local model override when the active subagent interface exposes one.
-3. Otherwise steer model choice in the child prompt as a best-effort preference, as allowed by Codex's model-selection guidance.
-4. If the provider or model is inaccessible, mark the seat unavailable.
-
-For a task-local `auto` effort, omit the reasoning-effort override. Do not pass the literal value `auto` as a live reasoning effort, and do not claim omission guarantees the child model's default: the effective effort is host-dependent until exposed. Saved agents must resolve `auto` to a supported concrete default before writing.
-
-Inspect the callable subagent interface rather than assuming every Codex surface exposes the same controls. Treat implementation-specific controls as conditional adapters, not public guarantees. If a child inherits the root model, report `inherited root — requested child model was not used`; never count that as a successful executor or independent advisor route.
-
-Do not report a model as used before Codex accepts the route. Distinguish these states:
-
-- `pinned custom agent available`: a matching saved agent is loaded, but has not run yet.
-- `live route available`: the current client exposes and accepts the requested model controls.
-- `unverified prompt preference`: only prompt steering is available.
-- `used and confirmed`: spawn or client metadata exposes the accepted route. Child prose alone is diagnostic, not routing proof.
-- `unavailable`: the requested model/provider cannot be routed here.
-- `none`: the advisor was disabled.
-
-Report a compact activation status, then continue the work in the same invocation:
+If the executor is missing, ask only:
 
 ```text
-Codex Orchestration
-Orchestrator: <active model if exposed, otherwise current task model> — active
-Advisor: <model>@<effort> — <state>, or none
-Executor: <model>@<effort> — <state>
-Delegation: allowed when useful; Codex planning and active Goal state unchanged
+Which executor model and effort should Codex use? You can optionally include an advisor; omission means none.
 ```
 
-## Use the advisor only when it helps
+Because explicit skills may not reload from a bare reply, include a ready-to-copy line using the exact label shown by the client and preserve the original work:
 
-Use the advisor only when configured and the root has produced a non-trivial plan or proposed executor slices worth checking. Skip it for simple work, while reporting that no plan review was needed.
+```text
+<exact-skill-label> setup executor=<model>@<effort-or-auto>, advisor=<model>@<effort-or-auto>|none
+```
 
-Send one advisor a self-contained review packet before executor work begins. Include:
+For a task-local request, append `— <original task>`. Keep every supplied modifier. Do not lose the user's task while collecting a model choice.
+
+If an old prompt contains `orchestrator:`, explain that the current task model already owns that role. Ignore that seat instead of switching or persisting it.
+
+Normalize `Extra High` to `xhigh`. Resolve display names to exact IDs only through the executing host's model catalog, picker, a loaded custom agent, or official provider documentation. Never invent an ID. For persistent direct routing, resolve `auto` to the catalog's concrete default.
+
+Read [providers-and-models.md](references/providers-and-models.md) before setup, when clients disagree, when a model is absent, when providers differ, or when custom agents or legacy migration are involved.
+
+## One-time native setup
+
+Use this path for a current same-provider setup such as Sol root to Luna or Terra executors.
+
+1. Identify the Codex binary used by the active host. Do not assume the shell `codex` is the Desktop binary.
+2. Resolve the exact executor and optional advisor IDs and efforts from that host.
+3. Run the bundled native configurator from this skill's real directory with Python 3.11 or newer. Use `python3` on typical macOS/Linux hosts; on Windows select an available `py -3.11` or `python` launcher after checking its version. Never use a repository-relative copy from the user's workspace.
+4. Inspect the dry-run output. A literal `setup` request authorizes applying a clean, non-replacement personal policy after that preview.
+5. Start a new task after apply. The user chooses the orchestrator in the normal model picker and no longer needs to invoke this skill for ordinary work.
+
+Typical dry run and apply:
+
+```bash
+python3 <skill-dir>/scripts/configure_native_routing.py \
+  --codex-bin <active-codex-binary> \
+  --executor-model gpt-5.6-luna \
+  --executor-effort xhigh
+
+python3 <skill-dir>/scripts/configure_native_routing.py \
+  --codex-bin <active-codex-binary> \
+  --executor-model gpt-5.6-luna \
+  --executor-effort xhigh \
+  --apply
+```
+
+Add `--advisor-model` and `--advisor-effort` only when an advisor was supplied. Omission persists `advisor: none`.
+
+The configurator capability-tests the complete four-field preset on the active target, `codex` on PATH when different, the known macOS Desktop binary when present, and every explicit `--compat-bin`. A successful isolated config probe means that client can parse the preset; it is not a live child-model confirmation. Report `route accepted` or `used and confirmed` only from the exact live spawn evidence defined below. Ask about other Codex/IDE installations that share this config only when the environment suggests they exist, and pass their binaries explicitly. If the request or active host indicates a named `--profile`, explain that normal setup manages the default user layer and is not verified for that profile; do not add a routine question for users with no profile signal. If a checked client rejects any managed field, stop before apply. Recommend updating it or using the task-local fallback. `--allow-incompatible-client` requires a separate explicit user decision because it can make the shared config unreadable to that client.
+
+For the current validated v2 direct route, set `tool_namespace = "agents"`. Live testing on Desktop `0.144.0-alpha.4` showed that the default reserved `collaboration.spawn_agent` schema rejected expanded model/effort metadata, while `agents` accepted the same request and spawned Luna at `xhigh`. Treat this as a required control-surface setting for that tested path, not as the executor selection. `usage_hint_text` carries the actual executor/advisor route.
+
+Do not add `enabled = true` for a Sol or Terra root. Their current model metadata selects v2. The configurator intentionally manages only:
+
+- `features.multi_agent_v2.hide_spawn_agent_metadata`;
+- `features.multi_agent_v2.tool_namespace`;
+- `features.multi_agent_v2.multi_agent_mode_hint_text`;
+- `features.multi_agent_v2.usage_hint_text`.
+
+It uses Codex App Server's `config/read` and `config/batchWrite` APIs, not a home-grown TOML rewrite. It preserves unrelated settings and comments, validates the whole effective config, and uses the user-layer version to detect races. Restore snapshots are limited to the four owned config fields; the namespaced state also records schema/version markers, config path, selected seats, and scalar-conversion metadata when needed. If the user explicitly replaces existing hint text, the exact prior text is stored for restoration; warn them never to place credentials in routing hints.
+
+If a user-authored mode or usage hint already exists, do not replace it automatically. Show the conflict. Use `--replace-existing-policy` only after the user explicitly approves replacing and later restoring those exact values.
+
+## Status, change, and disable
+
+For status:
+
+```bash
+python3 <skill-dir>/scripts/configure_native_routing.py \
+  --codex-bin <active-codex-binary> \
+  --status
+```
+
+Run status from the target project. Report the current task model as the orchestrator, the configured executor and advisor, whether the personal policy is installed and effective in that workspace, whether effective spawn controls are visible, whether the effective tool namespace is `agents`, the target config path, and checked-client compatibility. State that the installer cannot infer v2 activation for the model selected in a task; current Sol or Terra is the intended root.
+
+To change seats, run normal `setup` again. The configurator keeps the original restore snapshot rather than treating its own managed values as user settings.
+
+For disable, dry-run and then apply. A literal `disable` request authorizes a clean restore:
+
+```bash
+python3 <skill-dir>/scripts/configure_native_routing.py \
+  --codex-bin <active-codex-binary> \
+  --disable
+
+python3 <skill-dir>/scripts/configure_native_routing.py \
+  --codex-bin <active-codex-binary> \
+  --disable --apply
+```
+
+Disable must remain available even if an older client is incompatible with the active policy. Refuse to erase managed fields that the user edited after setup; explain the conflict instead.
+
+For personal v0.4 custom roles, preview and apply removal with `configure_orchestration.py --scope personal --personal-route-names --remove-saved-roles`. For older fixed-name personal roles, run a separate preview without `--personal-route-names`. Project removal uses `--scope project --root <trusted-project> --remove-saved-roles`. Delete only files that the configurator fully validates as managed; edited or user-owned files require manual review.
+
+## Durable or cross-provider custom agents
+
+Direct `model` routing is same-provider. A different provider needs an already authenticated Codex-compatible provider and a loaded custom agent that pins `model_provider`.
+
+Use the existing standalone-agent configurator for this extended path. Personal scope is required for machine-local provider IDs and affects all projects, so the user's explicit cross-provider `setup` request must name or confirm the existing provider ID. Never create provider definitions, collect keys in chat, or write credentials.
+
+First preview and apply the namespaced custom agents:
+
+```bash
+python3 <skill-dir>/scripts/configure_orchestration.py \
+  --scope personal \
+  --personal-route-names \
+  --codex-bin <active-codex-binary> \
+  --executor-model <exact-id> \
+  --executor-effort <effort> \
+  --executor-provider <existing-provider-id> \
+  --advisor-model <exact-id> \
+  --advisor-effort <effort> \
+  --advisor-provider <existing-provider-id>
+```
+
+When this cross-provider/custom-agent setup omits an advisor, pass `--remove-advisor` so a previously managed advisor is not left as a misleading saved seat. Apply only after a clean preview. Then point the native policy at the loaded role names:
+
+```bash
+python3 <skill-dir>/scripts/configure_native_routing.py \
+  --codex-bin <active-codex-binary> \
+  --executor-agent <reported-executor-agent-name> \
+  --advisor-agent <reported-advisor-agent-name> \
+  --apply
+```
+
+Omit `--advisor-agent` when none is configured. `--personal-route-names` generates stable CODEX_HOME-specific names and prints them for the native command. The native configurator verifies exactly one matching personal file and refuses a same-name project role in the current workspace. A custom-agent file is a stronger durable model/provider pin than a direct tool hint, but runtime identity is confirmed only when the host exposes it. Start a new task so Codex loads the role files.
+
+The standalone configurator also retains project-scoped saved roles, safe removal, and opt-in migration for releases 0.1–0.3. It must never change the root model, permissions, credentials, or global agent limits.
+
+## Preserve Codex's decisions
+
+The current task model remains the root. It owns intent, planning, architecture, decomposition, delegation, integration, review, final verification, and the final answer.
+
+Codex decides whether a plan helps, whether any work is safely delegable, how many independent slices exist, and whether parallelism is worth its context and integration cost. Keep simple, tightly coupled, context-heavy, and root-owned work with the root.
+
+This skill and its saved policy must never:
+
+- create a second orchestrator;
+- force a spawn or fixed worker count;
+- create or change Goal state;
+- weaken approvals or permissions;
+- create nested executor teams;
+- let an advisor direct executors;
+- parallelize overlapping writes;
+- silently substitute the root model for an unavailable child route.
+
+An explicit `no subagents` instruction always wins. A current-task seat override wins over the saved default for that task only.
+
+## Spawn routed children correctly
+
+Inspect the callable subagent interface. A saved current preset should expose the routed tool under `agents`; if only `collaboration` is exposed, do not assume the expanded direct route works. For a task-local fallback, use whichever callable namespace is actually present and pass exact route controls only when its schema exposes them.
+
+Every spawn that supplies `model`, `reasoning_effort`, or `agent_type` through this skill must use:
+
+```text
+fork_turns = "none"
+```
+
+A small positive partial fork is technically valid in Codex, but this skill deliberately requires `none`: it minimizes duplicated context and makes the root send a deliberate self-contained packet. Never use the default `all` with a different route. Full-history forks inherit the root model and Codex rejects the override.
+
+For a direct executor route, pass the exact configured model and concrete effort. For a custom route, pass the exact namespaced `agent_type`. Do not force a service tier; supported children may inherit Fast/priority from the parent, so tell users who prioritize allowance savings not to run the root in Fast mode.
+
+Direct model overrides keep the root's provider. Before a direct spawn, establish that the target model is on the same provider. If it differs or cannot be established, mark the route unavailable and require a custom agent that pins `model_provider`.
+
+After spawning, use the tool result or client metadata to confirm the accepted route. Distinguish:
+
+- `native policy installed`: the managed user policy exists; v2 activation still depends on the selected root and effective workspace config;
+- `pinned custom agent available`: a matching role is loaded, but has not run;
+- `route accepted`: the current tool accepted and validated the requested route controls;
+- `used and confirmed`: use only when the client explicitly exposes effective runtime model/provider/effort metadata;
+- `inherited root — requested child model was not used`;
+- `unavailable`: the requested route cannot run here;
+- `none`: no advisor is configured.
+
+Tool acceptance proves the requested route was valid and accepted, not necessarily that the client exposes post-start runtime identity. Child prose claiming a model name is not proof. If an exact route fails, report it to the root. Continue root-owned work only when the user did not make delegation or that seat a hard requirement.
+
+## Advisor review
+
+Use an advisor only when configured and the root has a non-trivial plan or executor slices worth reviewing. Skip it for simple work.
+
+Before executor work, send one advisor a self-contained packet containing:
 
 - user intent and acceptance criteria;
-- important constraints and repository facts;
+- relevant repository facts and constraints;
 - the root's plan and proposed executor slices;
-- dependencies, file ownership, and safe sequencing;
+- dependencies, ownership, and sequencing;
 - material risks and verification checks.
 
-The task-local advisor is review-only by instruction, not guaranteed read-only by its sandbox. A saved advisor requests `sandbox_mode = "read-only"`, but live parent permission overrides can still be reapplied. Tell the advisor not to edit, use mutating tools, spawn, delegate, contact executors, or make the final decision.
-
-Use this response contract:
+Tell the advisor to review only, report only to the root, avoid edits and mutation, never spawn, and never contact executors. Require exactly one first-line signal:
 
 ```text
-Review only the supplied plan and executor slices. Look for material requirement
-gaps, incorrect assumptions, missing dependencies, shallow or overlapping slices,
-unsafe parallel writes, integration risks, and weak acceptance or verification.
-Report only to the root. Do not edit, mutate, spawn, delegate, or contact executors.
-
-Start with exactly one of:
 PLAN_APPROVED
 PLAN_REVISE
 ```
 
-`PLAN_APPROVED` means the advisor found no material gap in the supplied packet; it is not a guarantee. `PLAN_REVISE` must give a short, prioritized list of material gaps and a concrete correction for each. Style preferences alone do not justify revision.
+`PLAN_APPROVED` means no material gap was found in the supplied packet, not that success is guaranteed. `PLAN_REVISE` must give prioritized material gaps and a concrete correction for each. Style preferences do not justify revision.
 
-The root adjudicates the advice and owns every plan change. After a material revision, allow at most one confirmation review. After two valid reviews, record which advice the root accepted or rejected and proceed. Ask the user only when the advice exposes a genuine missing user choice, requirement, or authority.
+The root adjudicates every suggestion and owns the revised plan. Allow at most one confirmation pass after a material revision. A configured advisor is a gate for a non-trivial executor plan by default. Transport failure, malformed output, inaccessible routing, or missing context means `advisor unavailable`, never approval; stop before executor work unless the user explicitly made the advisor best-effort.
 
-Treat transport failure, malformed output, missing context, and inaccessible routing as root-side `advisor unavailable` states, never as approval. Supplying an advisor makes its review required for a non-trivial plan unless the user explicitly says best-effort; simple work can still skip review because there is no material plan to gate. When required review is unavailable, do not silently substitute the root model or release executor work; ask the user to choose `advisor: none`, save a compatible advisor for a new task, or change surfaces. If they explicitly made review best-effort, disclose the failure and continue under the root.
+## Executor handoff
 
-## Delegate bounded executor work
+Give each executor one bounded packet with:
 
-After Codex independently decides delegation will help, give each executor a complete slice:
-
-- one objective and clear boundaries;
+- objective and boundaries;
 - only the context and repository facts it needs;
-- owned files or an explicit read-only assignment;
+- owned files or explicit read-only scope;
 - dependencies and stop conditions;
-- acceptance criteria and the smallest useful verification command;
-- the required handoff format.
+- acceptance criteria and smallest useful verification;
+- required handoff format.
 
-Require the executor to stay inside the slice, preserve unrelated work, avoid contacting the advisor, avoid spawning descendants, and report blockers rather than guessing. Its handoff should contain status, work completed, files or evidence, checks run, and remaining risks.
+Require it to preserve unrelated work, stay inside the slice, avoid the advisor, avoid descendants, and report blockers rather than guess. The handoff includes status, work completed, files or evidence, checks run, and remaining risks.
 
-Parallelize only independent slices. Give write-heavy executors non-overlapping ownership. Keep tightly coupled changes sequential or with the root. Do not discard context needed for correctness merely to force a cheaper model.
+Parallelize only genuinely independent slices with non-overlapping write ownership. The root inspects, integrates, and verifies every handoff. Executor completion is never final acceptance.
 
-The root inspects each handoff, integrates the work, resolves conflicts, runs final verification, and writes the user-facing answer. Executor completion is never final acceptance.
+## Task-local and older-client fallback
 
-An ordinary executor choice is a routing preference, not a requirement that every task spawn. If the route is unavailable, disclose it and let the root continue work that does not need delegation; never silently count an inherited-root child as the requested executor. If the user explicitly requires that executor route or requires delegated execution, treat unavailability as a gate and ask for a compatible route or permission for root-owned work.
+When the persistent policy is unavailable, apply the supplied seats only to the work in the same invocation. Do not claim that a mutable team was saved.
 
-## Save custom agents only when asked
+Use the strongest exact control the current client exposes:
 
-Task-local preference is the default. Persist only after an explicit `save` or `persist` request.
+1. a matching loaded namespaced custom agent;
+2. accepted direct `model` and `reasoning_effort` inputs with `fork_turns = "none"`;
+3. a clearly labeled prompt preference when exact routing is unavailable;
+4. `unavailable` when the provider or model cannot be reached.
 
-Use project scope for `save for this project`. Use personal scope only after explicit approval because it affects every project. A cross-provider pin normally requires personal scope, an already configured Codex-compatible provider, and a new task.
+For task-local `auto`, omit the reasoning-effort input. Never pass the literal string `auto` to a spawn tool; the effective inherited or host-chosen effort remains unverified unless the client exposes it.
 
-Run the bundled configurator with an available Python 3.11+ interpreter from this skill's real directory, never from a repository-relative path in the user's workspace. Use `python3` on typical macOS/Linux systems; on Windows choose an available `py -3.11` or `python` launcher after checking its version:
-
-```bash
-python3 <skill-dir>/scripts/configure_orchestration.py \
-  --scope project \
-  --root <workspace> \
-  --executor-model <exact-model-id> \
-  --executor-effort <effort-or-auto> \
-  --advisor-model <exact-model-id> \
-  --advisor-effort <effort-or-auto>
-```
-
-Omit advisor model flags when no advisor was supplied. When the user explicitly saves `advisor: none`, pass `--remove-advisor`. Pass the exact validated `--codex-bin` when the active Desktop host and the shell `codex` differ. Report the binary/version/catalog source shown by the preview.
-
-Run dry-run first and inspect the complete diff. An explicit `save for this project` authorizes applying a clean, non-migration project preview. Legacy migration always requires the user to approve the backup/deletion preview before `--apply`, even in project scope. Get separate approval before applying personal scope. Use `--confirm-unlisted-models` only after the executing host independently confirms each exact model; require explicit effort when a catalog cannot resolve `auto`.
-
-Normal persistence creates namespaced standalone agents only. For project scope, use the trusted workspace or repository root rather than an arbitrary subdirectory:
+Report a compact activation status and continue the included task:
 
 ```text
-.codex/agents/codex-orchestration-executor.toml
-.codex/agents/codex-orchestration-advisor.toml
+Codex Orchestration
+Orchestrator: <active model or current task model> — active
+Executor: <model>@<effort> — <route state>
+Advisor: <model>@<effort> — <route state>, or none
+Delegation: Codex decides when it helps; Plan and Goal behavior unchanged
 ```
 
-It must not modify the root model, `.codex/config.toml`, provider definitions, credentials, global agent limits, built-in agents, or user-owned custom agents. The saved executor contains only bounded-child instructions. The saved advisor contains only root-facing review instructions and requests a read-only sandbox.
+Never report a prompt preference or saved file as a model that actually ran. Report an exact tool call as `route accepted`; reserve runtime confirmation for explicit effective metadata.
 
-Do not run persistence while an untrusted process under the same OS account is mutating or swapping the workspace's `.codex` directories. The configurator rejects observed symlinks, hard links, and concurrent file changes; it is not a sandbox against a hostile same-user process with equivalent filesystem access.
+## Keep savings language honest
 
-If older generated output is detected, use `--migrate-legacy` only after reviewing the backup and deletion preview. Remove only artifacts whose complete known schema proves ownership. Preserve root model, provider, effort, concurrency settings, unrelated config, and edited or unknown files.
+The purpose is to spend high-end capacity where judgment matters and use an efficient coding model for eligible execution volume. Do not create agents solely to hit a percentage.
 
-The configurator journals multi-file writes without recording config contents or credentials. A dry run must stop if it detects an interrupted transaction; an approved `--apply` recovers that transaction before evaluating new changes. Do not delete or bypass a recovery journal manually.
+The “about 65%” example is a model-weighted credit calculation: at the published Luna rate of 20% of Sol, a comparable token mix with 20% on Sol and 80% on Luna costs `0.20 + (0.80 × 0.20) = 0.36`, about 64% fewer credits before orchestration overhead.
 
-On Windows, allow a first save into absent files. If a managed destination already exists, the configurator fails closed because this release cannot preserve and verify custom NTFS security descriptors. Report that limitation and require manual review; do not weaken the guard.
-
-Saved agents load only in a new task. Do not claim they became active in the current task, and do not imply that an active Goal moves to the new task.
-
-When the user asks to remove saved roles, preview and then run the configurator with the same scope and `--remove-saved-roles`. This removes only fully validated, namespaced executor/advisor files; it refuses edited or user-owned files and leaves `.codex/config.toml` untouched. Remove saved roles before uninstalling the plugin, then start a new task.
-
-## Keep savings claims accurate
-
-The purpose is to spend high-end model capacity where judgment matters and use an efficient model for eligible volume. Do not delegate or invoke an advisor solely to hit a savings target.
-
-When explaining the “about 65%” example, call it an illustrative credit calculation: published GPT-5.6 Luna token credit rates are 20% of Sol's, so a comparable mix with 20% on Sol and 80% on Luna is `0.20 + (0.80 × 0.20) = 0.36`, about 64% fewer credits before multi-agent overhead. Never call that 65% fewer raw tokens, a guaranteed five-hour or weekly-limit saving, a fixed monetary saving, or 5× more work.
-
-Subagents can increase total tokens. Advisor calls, copied context, retries, tools, and provider-specific billing may erase some or all of the apparent saving.
+Never call that 65% fewer raw tokens, a guaranteed five-hour or weekly-limit saving, a fixed monetary saving, or five times more completed work. Advisor calls, duplicated context, retries, tools, Fast service tier, and unnecessary workers can reduce or erase the benefit.
 
 ## Resources
 
-- `scripts/inspect_models.py`: inspect a Codex CLI catalog as a fallible host signal.
-- `scripts/configure_orchestration.py`: preview and apply optional namespaced custom agents.
-- [providers-and-models.md](references/providers-and-models.md): model, provider, routing, sandbox, Goal, and usage constraints.
+- `scripts/configure_native_routing.py`: one-time native setup, status, update, and disable.
+- `scripts/configure_orchestration.py`: namespaced custom agents, provider pins, safe removal, and legacy migration.
+- `scripts/inspect_models.py`: fallible host-catalog diagnostics.
+- [providers-and-models.md](references/providers-and-models.md): detailed capability, provider, compatibility, persistence, and usage boundaries.

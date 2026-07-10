@@ -1,7 +1,7 @@
 interface:
   display_name: "Codex Orchestration"
-  short_description: "Optional plan reviewer plus efficient executors"
-  default_prompt: "Use $codex-orchestration to choose an executor and optional advisor while the current task model stays in charge."
+  short_description: "One-time efficient executor routing"
+  default_prompt: "Use $codex-orchestration to set up an efficient executor while the selected task model stays in charge."
 
 policy:
   allow_implicit_invocation: false

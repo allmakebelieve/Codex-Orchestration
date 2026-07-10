@@ -16,94 +16,136 @@ SKILL = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
 REFERENCE = (SKILL_ROOT / "references" / "providers-and-models.md").read_text(
     encoding="utf-8"
 )
+NATIVE_SCRIPT = (
+    SKILL_ROOT / "scripts" / "configure_native_routing.py"
+).read_text(encoding="utf-8")
 
 
 class SkillContractTests(unittest.TestCase):
-    def test_invocation_authorizes_but_never_forces_delegation(self) -> None:
-        self.assertIn("authorizes Codex to use its native subagents", SKILL)
-        self.assertIn("does not require a spawn", SKILL)
-        self.assertIn("explicit `no subagents` instruction", SKILL)
+    def test_public_controls_are_simple_and_setup_is_persistent(self) -> None:
+        self.assertIn("setup executor: GPT-5.6 Luna Extra High", SKILL)
+        self.assertIn("/codex-orchestration status", SKILL)
+        self.assertIn("/codex-orchestration disable", SKILL)
+        self.assertIn("current-task override", SKILL)
+        self.assertIn("no longer needs to invoke this skill", SKILL)
 
-    def test_missing_values_require_a_fresh_explicit_invocation(self) -> None:
-        self.assertIn("explicit-only and may not reload from a bare reply", SKILL)
-        self.assertIn(
-            "<exact-skill-label> executor=<model>@<effort-or-auto>", SKILL
-        )
-        self.assertIn("<original task>", SKILL)
-        self.assertIn("Reuse the exact label that invoked the skill", SKILL)
-        self.assertIn("placeholders only for missing seats", SKILL)
-        self.assertIn("every understood modifier", SKILL)
-        self.assertIn("save for this project", SKILL)
+    def test_current_task_model_is_the_only_orchestrator(self) -> None:
+        self.assertIn("already the orchestrator", SKILL)
+        self.assertIn("Never ask the user to configure another one", SKILL)
+        self.assertIn("The current task model remains the root", SKILL)
+        self.assertIn("never change the root model", SKILL)
+        self.assertNotIn("--orchestrator-model", SKILL)
 
-    def test_task_local_auto_is_omitted_not_forwarded(self) -> None:
-        self.assertIn("omit the reasoning-effort override", SKILL)
-        self.assertIn("Do not pass the literal value `auto`", SKILL)
-        self.assertIn("resolve `auto` to a concrete", REFERENCE)
-        self.assertIn("effective effort is host-dependent", SKILL)
-        self.assertIn("may inherit the root session's effort", REFERENCE)
+    def test_advisor_omission_means_none(self) -> None:
+        self.assertIn("if omitted, it means `advisor: none`", SKILL)
+        self.assertIn("Do not ask a separate advisor question", SKILL)
+        self.assertIn("Omission persists `advisor: none`", SKILL)
+        self.assertIn("No advisor is configured", NATIVE_SCRIPT)
 
-    def test_task_local_advisor_is_not_claimed_as_sandboxed(self) -> None:
-        self.assertIn("review-only by instruction", SKILL)
-        self.assertIn("not guaranteed read-only", SKILL)
-        self.assertIn("live parent permission overrides", SKILL)
-        self.assertIn('sandbox_mode = "read-only"', SKILL)
+    def test_codex_still_decides_when_to_delegate(self) -> None:
+        self.assertIn("Codex decides whether a plan helps", SKILL)
+        self.assertIn("force a spawn or fixed worker count", SKILL)
+        self.assertIn("Keep simple, tightly coupled", SKILL)
+        self.assertIn("explicit `no subagents` instruction always wins", SKILL)
 
-    def test_advisor_failure_is_not_an_approval_signal(self) -> None:
-        self.assertIn("root-side `advisor unavailable`", SKILL)
-        self.assertNotIn("ADVISOR_BLOCKED", SKILL)
-        self.assertIn("never as approval", SKILL)
-        self.assertIn("Supplying an advisor makes its review required", SKILL)
+    def test_native_policy_manages_only_required_fields(self) -> None:
+        for field in (
+            "hide_spawn_agent_metadata",
+            "tool_namespace",
+            "multi_agent_mode_hint_text",
+            "usage_hint_text",
+        ):
+            self.assertIn(field, SKILL)
+            self.assertIn(field, NATIVE_SCRIPT)
+        self.assertIn('`tool_namespace = "agents"`', SKILL)
+        self.assertIn("reserved `collaboration.spawn_agent` schema", SKILL)
+        self.assertIn("Do not add `enabled = true`", SKILL)
+        self.assertIn('ROUTING_TOOL_NAMESPACE = "agents"', NATIVE_SCRIPT)
 
-    def test_simple_work_skips_unnecessary_review_and_delegation(self) -> None:
-        self.assertIn("Skip it for simple work", SKILL)
-        self.assertIn("After Codex independently decides delegation will help", SKILL)
+    def test_native_config_uses_codex_app_server(self) -> None:
+        self.assertIn("Codex App Server's `config/read`", SKILL)
+        self.assertIn("`config/batchWrite`", SKILL)
+        self.assertIn('"initialize",', NATIVE_SCRIPT)
+        self.assertIn('"config/read"', NATIVE_SCRIPT)
+        self.assertIn('"config/batchWrite"', NATIVE_SCRIPT)
+        self.assertIn('"expectedVersion"', NATIVE_SCRIPT)
+        self.assertIn('"reloadUserConfig"', NATIVE_SCRIPT)
 
-    def test_goal_state_remains_user_owned(self) -> None:
-        self.assertIn("Do not create or change Goal state", SKILL)
-        self.assertIn("user already started a Goal", SKILL)
-        self.assertIn("does not create, start, pause, or modify a Goal", REFERENCE)
+    def test_every_different_route_uses_a_non_history_fork(self) -> None:
+        self.assertIn('fork_turns = "none"', SKILL)
+        self.assertIn("Never use the default `all`", SKILL)
+        self.assertIn("Full-history forks inherit the root model", SKILL)
+        self.assertIn('fork_turns = "none"', NATIVE_SCRIPT)
+        self.assertIn('Never use fork_turns = "all"', NATIVE_SCRIPT)
 
-    def test_cross_provider_first_use_requires_saved_agent_and_new_task(self) -> None:
-        self.assertIn("A first-use inline request cannot switch providers", REFERENCE)
-        self.assertIn("existing authenticated Codex-compatible provider", REFERENCE)
-        self.assertIn("a new task that loads the agent", REFERENCE)
-        self.assertIn("Never ask the user to paste an API key", REFERENCE)
+    def test_root_and_child_boundaries_are_in_the_saved_mode(self) -> None:
+        self.assertIn("If you are the root task model", NATIVE_SCRIPT)
+        self.assertIn("If you are a spawned child", NATIVE_SCRIPT)
+        self.assertIn("never spawn descendants", NATIVE_SCRIPT)
+        self.assertIn("Explicit user instructions win", NATIVE_SCRIPT)
+        self.assertIn("This policy does not create or change a Goal", NATIVE_SCRIPT)
 
-    def test_prompt_preference_is_not_reported_as_exact_routing(self) -> None:
-        self.assertIn("unverified prompt preference", SKILL)
-        self.assertIn("Do not report a model as used before Codex accepts", SKILL)
-        self.assertIn("requested child model was not used", SKILL)
-        self.assertIn("Child prose alone is diagnostic, not routing proof", SKILL)
-        self.assertIn("ordinary executor choice is a routing preference", SKILL)
-        self.assertIn("explicitly requires that executor route", SKILL)
+    def test_mixed_client_compatibility_is_capability_detected(self) -> None:
+        self.assertIn("capability-tests the complete four-field preset", SKILL)
+        self.assertIn("isolated `CODEX_HOME`", REFERENCE)
+        self.assertIn("--allow-incompatible-client", SKILL)
+        self.assertIn("Disable must remain available", SKILL)
+        self.assertIn("supports_native_policy", NATIVE_SCRIPT)
 
-    def test_saved_scope_is_complete_and_persists_advisor_none(self) -> None:
-        self.assertIn("complete saved team", SKILL)
-        self.assertIn("missing namespaced advisor means saved `advisor: none`", SKILL)
-        self.assertIn("Do not merge in a personal advisor", SKILL)
-        self.assertIn("Treat each scope as a complete team record", REFERENCE)
-        self.assertIn("Fall back to a personal team only when no managed project", REFERENCE)
+    def test_setup_is_reversible_and_conflict_safe(self) -> None:
+        self.assertIn("pre-setup values", SKILL)
+        self.assertIn("--replace-existing-policy", SKILL)
+        self.assertIn("Refuse to erase managed fields", SKILL)
+        self.assertIn("persistence fails after config apply", REFERENCE)
+        self.assertIn("automatic rollback", NATIVE_SCRIPT)
+        self.assertIn("rejects a stale user-layer version", REFERENCE)
 
-    def test_saved_role_removal_does_not_require_seat_values(self) -> None:
-        self.assertIn("configuration-control requests", SKILL)
-        self.assertIn("do not require executor/advisor values", SKILL)
-        self.assertIn("resolves a cross-scope name collision", SKILL)
+    def test_cross_provider_requires_existing_provider_and_custom_agent(self) -> None:
+        self.assertIn("already authenticated Codex-compatible provider", SKILL)
+        self.assertIn("loaded custom agent", SKILL)
+        self.assertIn("Never create provider definitions", SKILL)
+        self.assertIn("Never create provider definitions", REFERENCE)
+        self.assertIn("Responses wire protocol", REFERENCE)
+        self.assertIn("Anthropic Messages", REFERENCE)
+        self.assertIn("--personal-route-names", SKILL)
+        self.assertIn("verify_agent_routes", NATIVE_SCRIPT)
+        self.assertIn("same-name project role", SKILL)
 
-    def test_saved_roles_do_not_touch_root_or_global_agent_limits(self) -> None:
-        self.assertIn("must not modify the root model", SKILL)
-        self.assertIn("`.codex/config.toml`", SKILL)
+    def test_direct_routes_are_guarded_to_the_root_provider(self) -> None:
+        self.assertIn("Direct model overrides keep the root's provider", SKILL)
+        self.assertIn("target model is on the same provider", NATIVE_SCRIPT)
+        self.assertIn("require a custom agent that pins model_provider", NATIVE_SCRIPT)
+
+    def test_advisor_is_bounded_root_only_and_failure_is_not_approval(self) -> None:
+        self.assertIn("PLAN_APPROVED", SKILL)
+        self.assertIn("PLAN_REVISE", SKILL)
+        self.assertIn("report only to the root", SKILL)
+        self.assertIn("never contact executors", SKILL)
+        self.assertIn("`advisor unavailable`, never approval", SKILL)
+        self.assertIn("at most one confirmation pass", SKILL)
+
+    def test_route_reporting_is_truthful(self) -> None:
+        self.assertIn("native policy installed", SKILL)
+        self.assertIn("route accepted", SKILL)
+        self.assertIn("used and confirmed", SKILL)
+        self.assertIn("only when the client explicitly exposes", SKILL)
+        self.assertIn("inherited root — requested child model was not used", SKILL)
+        self.assertIn("Child prose claiming a model name is not proof", SKILL)
+        self.assertIn("Never report a prompt preference", SKILL)
+
+    def test_goal_permissions_and_limits_remain_codex_owned(self) -> None:
+        self.assertIn("create or change Goal state", SKILL)
+        self.assertIn("weaken approvals or permissions", SKILL)
         self.assertIn("global agent limits", SKILL)
-        self.assertIn("trusted workspace or repository root", SKILL)
-        self.assertIn("load only in a new task", SKILL)
+        self.assertIn("does not create, start, pause, clear, or alter a Goal", REFERENCE)
 
-    def test_persistence_contract_covers_crash_recovery_and_windows(self) -> None:
-        self.assertIn("journals multi-file writes", SKILL)
-        self.assertIn("without recording config contents or credentials", SKILL)
-        self.assertIn("approved `--apply` recovers", SKILL)
-        self.assertIn("custom NTFS security descriptors", SKILL)
-        self.assertIn("Python 3.11+", SKILL)
-        self.assertIn("--remove-saved-roles", SKILL)
-        self.assertIn("Legacy migration always requires the user to approve", SKILL)
+    def test_savings_claim_is_credits_not_raw_tokens(self) -> None:
+        self.assertIn("model-weighted credit calculation", SKILL)
+        self.assertIn("about 64% fewer credits", SKILL)
+        self.assertIn("Never call that 65% fewer raw tokens", SKILL)
+        self.assertIn("Fast service tier", SKILL)
+        self.assertIn("five-hour", REFERENCE)
+        self.assertIn("weekly limits", REFERENCE)
 
 
 if __name__ == "__main__":

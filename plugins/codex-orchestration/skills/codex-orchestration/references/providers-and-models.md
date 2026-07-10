@@ -1,181 +1,269 @@
 # Models, Providers, and Routing Boundaries
 
-Use this reference when a requested seat is not a simple, same-provider task preference.
+Use this reference for setup, client compatibility, custom providers, or a route that does not behave as requested.
 
-## Contents
+## The shortest correct model
 
-- [Start with the executing host](#start-with-the-executing-host)
-- [Current model versus child models](#current-model-versus-child-models)
-- [Task-local model steering](#task-local-model-steering)
-- [Saved custom agents](#saved-custom-agents)
-- [Project scope](#project-scope)
-- [Personal and cross-provider scope](#personal-and-cross-provider-scope)
-- [Persistence and migration safety](#persistence-and-migration-safety)
-- [Advisor permissions](#advisor-permissions)
-- [Goals and task lifetime](#goals-and-task-lifetime)
-- [Usage and savings language](#usage-and-savings-language)
-- [Truthful seat states](#truthful-seat-states)
-- [Primary sources](#primary-sources)
+1. The model selected for the Codex task is the root orchestrator.
+2. A current Sol or Terra root uses multi-agent v2.
+3. The saved policy supplies the exact route for every delegated executor and optional advisor.
+4. Codex still decides whether a spawn helps.
+5. Every different-model, different-effort, or custom-agent child uses `fork_turns = "none"` and a self-contained packet.
+6. The root reviews and verifies all child work.
+
+The policy tells Codex which route to request for **delegated executor work**. It does not force every task to delegate or add a second scheduler.
+
+## Current capability matrix
+
+These facts were source-checked and runtime-tested on July 10, 2026. Always capability-test the actual host because the fields are still evolving.
+
+| Capability | Current behavior | Consequence |
+| --- | --- | --- |
+| Sol model metadata | `multi_agent_version = v2` | A Sol root uses v2 without forcing the feature flag. |
+| Terra model metadata | `multi_agent_version = v2` | A Terra root also uses the native policy. |
+| Luna model metadata | `multi_agent_version = v1` | Luna is suitable as a v2 child, but a Luna root does not activate this v2 policy. |
+| `hide_spawn_agent_metadata = false` | Shows `agent_type`, `model`, `reasoning_effort`, and `service_tier` on v2 spawn | Required for direct route control; it does not select a route alone. |
+| `tool_namespace = "agents"` | On live-tested Desktop `0.144.0-alpha.4`, the default `collaboration` namespace rejected expanded model/effort metadata; `agents` accepted it and spawned Luna at `xhigh`. | Required for this validated direct-routing path. It changes the callable namespace but does not select Luna. |
+| `usage_hint_text` | Appended to the spawn tool description | Carries the exact executor/advisor route where the root chooses children. |
+| `multi_agent_mode_hint_text` | Replaces the default proactive/explicit mode hint and is sent to root and child tasks | Must contain both root and child boundaries. |
+| `fork_turns` default | `all` | Different model/effort/role overrides are rejected unless the call uses `none` or a positive partial fork. |
+| v2 default concurrency | Four active threads including the root | Normally at most three children run concurrently. Codex chooses the useful count. |
+| Older CLI 0.142.5 | Rejects `multi_agent_mode_hint_text` as an unknown feature-table field | Never write the global native policy without checking every known shared-config client. |
+
+The installer does not infer this from version strings. It launches each detected binary with an isolated `CODEX_HOME` and probes whether it can parse all four managed fields. That is a config-compatibility check, not proof of a live child route.
+
+## Why `enabled = true` is omitted
+
+Current resolution prefers the selected model's `multi_agent_version` over the global feature flag. Sol and Terra already select v2, so the one-time setup does not need to force it.
+
+Forcing `features.multi_agent_v2.enabled = true` can:
+
+- show an under-development feature warning;
+- conflict with an older `agents.max_threads` setting;
+- change behavior for unrelated root models without the user asking.
+
+If the user's config uses the older scalar form `multi_agent_v2 = true|false`, the configurator temporarily converts that value to the equivalent table form and records the original scalar. Disable restores the exact boolean only if no other table fields were added afterward.
+
+## What the four managed fields do
+
+The control surface and the route are separate:
+
+- `hide_spawn_agent_metadata = false` exposes the model, effort, agent-type, and service-tier spawn inputs;
+- `tool_namespace = "agents"` makes the expanded route callable on the currently validated Desktop build;
+- `multi_agent_mode_hint_text` carries the root/child behavior and safety boundaries;
+- `usage_hint_text` carries the exact executor and optional advisor route.
+
+`multi_agent_mode_hint_text` describes the policy:
+
+- current task model is the one root orchestrator;
+- Codex decides whether delegation is useful;
+- optional advisor is root-only and reviews before executor work;
+- executor packets are bounded and self-contained;
+- children do not create descendants;
+- user overrides and `no subagents` win;
+- Goal, permissions, approvals, and worker counts are not changed.
+
+`usage_hint_text` attaches the route to the spawn tool itself:
+
+```text
+executor -> model="gpt-5.6-luna", reasoning_effort="xhigh", fork_turns="none"
+advisor  -> model="gpt-5.6-terra", reasoning_effort="high", fork_turns="none"
+```
+
+For a durable custom-agent route it uses:
+
+```text
+agent_type="codex_orchestration_executor", fork_turns="none"
+agent_type="codex_orchestration_advisor", fork_turns="none"
+```
+
+The custom mode text is visible in spawned children too. That is why it says: if root, orchestrate; if child, stay within the packet and never spawn.
+
+## Routing strength and its honest boundary
+
+There is no global Codex field named `executor_model`. The native same-provider route combines:
+
+- visible v2 spawn metadata under the validated `agents` namespace;
+- persistent spawn-tool guidance;
+- a model-visible exact `model` and `reasoning_effort` input;
+- runtime catalog validation when the tool call is accepted;
+- optional effective-runtime confirmation when the client exposes it.
+
+That is strong routing, but it is not a separate engine-level scheduler. The root can still choose not to delegate. Tool acceptance proves Codex accepted and validated the requested route; it does not guarantee that every client exposes the effective post-start identity. If the model ignores the required route or the tool rejects it, report that mismatch rather than claiming success.
+
+A custom-agent file is the stronger persistent pin for a reusable role because the role config can set `model`, `model_reasoning_effort`, and `model_provider`. A stronger live parent override can still win, so confirm the effective child metadata either way.
+
+## Forking rules
+
+V2 `spawn_agent` defaults to a full-history fork. Full-history children inherit the root model, provider, and reasoning effort. Codex therefore rejects `agent_type`, `model`, or `reasoning_effort` on a fork with `fork_turns = "all"`.
+
+Use:
+
+```text
+fork_turns = "none"
+```
+
+and send a self-contained task packet. A small positive turn count also permits overrides, but `none` is the Codex-Orchestration default because it minimizes duplicate context and makes the handoff deliberate.
+
+Correctness wins over context savings. If a bounded packet cannot carry the necessary context safely, keep the work with the root instead of forcing a cheaper child.
 
 ## Start with the executing host
 
-The model chosen for the current task is the orchestrator. Do not infer its name when the client does not expose it.
+Do not keep a static display-name alias table. Model IDs, efforts, access, providers, and model metadata change.
 
-Resolve advisor and executor models from the host that will actually run them:
+Resolve seats in this order:
 
-1. Check an already loaded, namespaced custom agent.
-2. Check the current client's model picker or child-routing interface.
-3. Inspect the exact Codex binary used by that client when available.
-4. Treat `scripts/inspect_models.py` and `codex debug models` as fallible debug signals, not stable product APIs.
-5. Use official provider documentation to normalize a display name.
-6. Ask for an exact ID if the sources disagree or the mapping is ambiguous.
+1. active host's App Server `model/list` result;
+2. current client model picker or accepted spawn controls;
+3. a loaded namespaced custom agent;
+4. exact binary catalog diagnostics;
+5. official provider documentation;
+6. user-supplied exact ID when the sources are ambiguous.
 
-A missing shell-CLI entry does not prove that a newer Desktop model is unavailable. A model shown by Desktop does not prove that an older PATH `codex` can validate it. Report the binary path, version, and catalog source used for saved configuration.
+`scripts/inspect_models.py` and debug catalog commands are useful signals, not permanent APIs. A missing shell-CLI model does not prove a newer Desktop model is unavailable. Always report which binary and catalog supplied the model IDs for a persistent preset; do not call that a live route confirmation.
 
-Do not maintain a static alias table. Catalogs, model names, efforts, account access, and provider integrations change.
+For task-local `auto`, omit the effort override and call the effective effort unverified until exposed. For persistent direct or custom-agent routing, resolve `auto` to the model's concrete catalog default so the root effort cannot leak into the child.
 
-## Current model versus child models
+## Native persistence and restoration
 
-The current task model remains the root orchestrator. Never persist a new root `model`, `model_reasoning_effort`, or `model_provider` on behalf of this skill.
+`configure_native_routing.py` writes the personal user config because the policy is meant to work in later tasks and projects.
 
-OpenAI currently describes Sol as the quality/depth choice, Terra as the balanced choice, and Luna as the speed/affordability choice. That makes Sol-orchestrator/Luna-executor a useful example, not a universal default.
-
-Use an efficient executor only when the root can give it a bounded objective, enough context, clear ownership, acceptance criteria, and verification. A cheaper model is not automatically appropriate just because Codex can spawn it.
-
-The advisor is a root-facing second opinion. It never coordinates with executors. A different model family may add a useful lens, but only when the route is already available and the extra review is worth its latency and usage.
-
-## Task-local model steering
-
-Codex documents two ways to influence child model choice:
-
-- steer the choice in the prompt;
-- pin `model` and `model_reasoning_effort` in a custom-agent file.
-
-Treat prompt steering as best-effort until the client confirms the accepted child route. If the active child interface exposes direct model controls, use them conditionally and confirm acceptance; do not promise those implementation details exist on every surface.
-
-For task-local `auto`, omit the reasoning-effort override. The literal string `auto` is not a live effort value. Omission may inherit the root session's effort or another host-resolved value, so keep the effective effort unverified until the client exposes it. For saved agents, resolve `auto` to a concrete catalog-supported default so a root effort override cannot leak into the child.
-
-If a child needs context that forces it to inherit the root model, report:
+It uses the official App Server flow:
 
 ```text
-inherited root — requested child model was not used
+initialize -> initialized -> config/read(includeLayers=true)
+           -> config/batchWrite(expectedVersion=...)
+           -> config/read verification
 ```
 
-Do not downgrade this to a partial success. Correct context is more important than forcing a cheaper route.
+The App Server permits writes only to the user config. It performs full schema and managed-requirement validation, preserves TOML comments and unrelated fields through `toml_edit`, atomically persists the file, returns `okOverridden` when a higher layer wins, and rejects a stale user-layer version.
 
-## Saved custom agents
+The configurator writes each owned nested field separately, except when converting a legacy boolean feature shape. It refuses to replace user-authored hint strings unless `--replace-existing-policy` was explicitly approved. Setup verifies both the user layer and the effective config in the current workspace; it rolls back when a project or managed layer already overrides the installed policy there.
 
-Codex's documented reusable format is one standalone TOML file per custom agent:
+Restore state lives at:
+
+```text
+~/.codex/.codex-orchestration-routing.json
+```
+
+It contains the prior and managed values of the four owned fields, chosen seat IDs, schema/version markers, scalar-conversion metadata when needed, and config path. It never copies provider definitions, auth stores, or config outside those fields. A normal clean setup contains generated policy text, the namespace value, seat IDs, and restoration metadata. Explicit replacement must retain the user's exact old hint text so disable can restore it; routing hints must never contain credentials. State is written with a same-directory atomic replacement and restrictive file mode where supported. If persistence fails after config apply, the configurator rolls the config back using the returned version.
+
+Disable compares every current managed value before restoration. If the user edited a managed field after setup, it stops instead of erasing that work. Without state, each surviving marker proves ownership only of that hint string. Disable may safely remove the marked string or strings, but it leaves metadata visibility and the tool namespace unchanged because their previous values are unknown.
+
+## Shared-config compatibility
+
+Desktop and CLI commonly share `~/.codex/config.toml`. A field supported by Desktop can prevent an older CLI from starting at all.
+
+Setup automatically checks the installations it can identify:
+
+- the supplied active-host binary;
+- `codex` on PATH when different;
+- the macOS Desktop embedded binary when present;
+- every explicit `--compat-bin`.
+
+Ask the user about alternate Desktop, IDE, container, or Windows installations that share the same home, because no open-source installer can discover every possible binary path. Pass each known path with `--compat-bin`.
+
+If any checked binary rejects the complete preset, normal setup fails before writing. Preferred resolution: update that client. The per-task skill workflow remains available without a global policy. Successful parsing does not prove that a future task selected a v2 root or that a live model route was accepted.
+
+`--allow-incompatible-client` is an escape hatch only after the user explicitly accepts that the named client may stop loading the shared config. Disable never blocks on this compatibility check; otherwise the policy could trap the user.
+
+## Custom agents
+
+Codex's reusable role format is one TOML file per custom agent:
 
 ```text
 <project>/.codex/agents/*.toml
 ~/.codex/agents/*.toml
 ```
 
-Every file requires `name`, `description`, and `developer_instructions`. It may also pin `model`, `model_reasoning_effort`, and `sandbox_mode`.
-
-Codex-Orchestration uses namespaced identities so it does not replace built-in or generic user roles:
+Project-scoped/legacy saves use these fixed names:
 
 ```text
-filename: codex-orchestration-executor.toml
-name:     codex_orchestration_executor
-
-filename: codex-orchestration-advisor.toml
-name:     codex_orchestration_advisor
+codex-orchestration-executor.toml -> codex_orchestration_executor
+codex-orchestration-advisor.toml  -> codex_orchestration_advisor
 ```
 
-The executor instructions constrain only the child: perform the assigned slice, do not broaden scope or spawn descendants, verify, and report to the root.
+Personal roles used by the global native policy add a stable 12-character suffix derived from the canonical `CODEX_HOME` path:
 
-The advisor instructions constrain only the child: review the supplied packet, do not edit or delegate, and return `PLAN_APPROVED` or `PLAN_REVISE` to the root. The file requests `sandbox_mode = "read-only"`.
+```text
+codex-orchestration-executor-<personal-id>.toml -> codex_orchestration_executor_<personal-id>
+codex-orchestration-advisor-<personal-id>.toml  -> codex_orchestration_advisor_<personal-id>
+```
 
-That sandbox setting is a requested default, not an absolute guarantee. Codex documents that live parent sandbox and permission overrides can be reapplied to children. Keep the review-only behavioral instructions even when a read-only sandbox is configured.
+This prevents accidental shadowing by the older fixed project names. The native configurator requires exactly one matching personal role and refuses a same-name project role in the current workspace. Because project roles have higher precedence, run status in each project before relying on a personal custom-agent route; a deliberately duplicated suffixed name can still shadow it.
 
-Custom agents load when a new task starts. Writing a file does not hot-load it into the current task. The `name` field is the source of truth; the matching filename is a convention. Save project agents at the trusted workspace or repository root; an untrusted or unrelated directory may not load project-scoped agents.
+The executor file says to implement only the root's bounded packet, preserve unrelated work, verify, report, and never spawn. The advisor file says to review only the root's packet, request a read-only sandbox, return `PLAN_APPROVED` or `PLAN_REVISE`, and never edit, delegate, or contact executors.
 
-Treat the file's model and effort as configuration pins, not proof of the model that ran. A stronger live client override may take precedence. Confirm the effective route after spawning whenever the client exposes it.
+Custom agents load in a new task. Writing a file does not hot-load it into an existing task. A project-scoped role loads only from a trusted project. If the same role name exists in project and personal scope, report the collision instead of guessing precedence.
 
-If the same custom-agent name exists in more than one loaded scope or file, refuse to guess precedence and resolve the collision first. When there is no collision, treat each scope as described below.
+Treat a saved scope as one complete team anchored by its executor. A missing same-scope advisor means `advisor: none`; never silently borrow an advisor from another scope.
 
-Treat each scope as a complete team record anchored by its managed executor. If the project executor exists, use only the project team; a missing project advisor means saved `advisor: none`, not “look for a personal advisor.” Fall back to a personal team only when no managed project executor exists. An advisor without a same-scope managed executor is incomplete state and must not be merged implicitly.
+The standalone-agent configurator remains dry-run first, rejects symlinks and hard links, preserves supported metadata, journals multi-file transactions without storing config contents, refuses edited or user-owned files, and uses opt-in backup-first migration for known output from versions 0.1–0.3.
 
-## Project scope
+## Provider boundaries
 
-Project scope is the portable default. Normal setup writes only the two namespaced files under `.codex/agents/` and leaves `.codex/config.toml` byte-for-byte unchanged or absent.
+Direct v2 `model` overrides retain the parent's provider. They are the simplest route for an OpenAI root and OpenAI Luna/Terra child.
 
-Project setup must not write:
+A cross-provider seat normally needs:
 
-- a root model or effort;
-- `agents.max_threads` or `agents.max_depth`;
-- provider selection or provider definitions;
-- credentials;
-- built-in-agent overrides;
-- unrelated tools, MCP servers, skills, permissions, or instructions.
+1. a provider already defined and authenticated in the user's Codex config;
+2. a personal custom agent that pins the provider, model, and effort;
+3. a new task that loads that agent;
+4. v2 spawn with the matching `agent_type` and `fork_turns = "none"`.
 
-Project configuration loads only for a trusted project, following Codex's normal trust boundary.
+Never create provider definitions, request keys in chat, write credentials, or imply that an OpenAI login grants access to another provider.
 
-## Personal and cross-provider scope
-
-Personal scope changes future behavior across projects, so require explicit approval before applying it.
-
-Write `model_provider` only when the provider ID is already built in or defined in the user's personal Codex configuration. Never create a provider definition, endpoint, authentication setting, or credential. Never ask the user to paste an API key into chat.
-
-A first-use inline request cannot switch providers by itself because a task-local child model preference has no separate portable provider route. A model from Anthropic or another provider normally needs:
-
-1. an existing authenticated Codex-compatible provider;
-2. a personal custom agent pinned to that provider and model;
-3. a new task that loads the agent;
-4. a child interface able to select the loaded agent.
-
-OpenAI credentials do not grant Anthropic access. Do not assume that Codex's supported provider protocol is interchangeable with Anthropic's native Messages API. Use only a provider integration the user has already configured and tested.
-
-## Persistence and migration safety
-
-The configurator is dry-run by default. A normal project save may apply after a clean preview because the user explicitly asked to save for that project. Personal apply requires a separate approval.
-
-Managed files are replaceable only when their complete marker, schema, identity, instructions, and allowed keys match this release. Refuse altered or user-owned files. Reject symlinks, duplicate names, conflicting backups, malformed TOML, incomplete legacy provenance, and concurrent changes.
-
-This is safe configuration persistence, not a same-user security sandbox. Run it only in a trusted workspace that is not being deliberately path-swapped by another process under the same OS account; such a process already has equivalent access to the user's Codex files.
-
-On macOS and Linux, updates use same-directory atomic swaps, preserve and verify supported security metadata, fsync changed directory entries, and keep a content-free recovery journal across the multi-file publish boundary. An interrupted prepared transaction rolls back to the old set; an interrupted fully committed transaction keeps the new set and finishes cleanup. Do not print journal-adjacent file contents.
-
-On Windows, initial creation into absent files is supported. Updating or removing an existing managed file fails closed because Python's portable copy APIs do not preserve and verify custom NTFS security descriptors. Do not bypass this restriction; require a manual, user-reviewed replacement.
-
-The configurator requires Python 3.11 or newer. Select an available host launcher (`python3`, `py -3.11`, or `python`) rather than assuming Windows provides a `python3` command.
-
-`--remove-saved-roles` previews and removes only fully validated namespaced executor/advisor files in the selected scope. It leaves root config and legacy artifacts alone, refuses edited files, and follows the same Windows update/removal restriction.
-
-Legacy migration is opt-in and always requires user approval after the backup/deletion preview, including in project scope. It may remove only exact output from known previous releases. Preserve root model/provider/effort, global agent limits, comments, unrelated tables, and unknown or edited files. Older releases may have changed root settings; the migrator cannot safely reconstruct what existed before them.
+Codex custom providers currently use the Responses wire protocol. An Anthropic Messages endpoint is not automatically compatible. Use a supported integration that the user has configured and tested, such as an appropriate Amazon Bedrock route where available.
 
 ## Advisor permissions
 
-Task-local subagents inherit the parent permission mode and tools. Therefore:
+A task-local advisor is review-only by instruction. Do not claim it is mechanically read-only unless the effective child sandbox confirms that.
 
-- call a task-local advisor `review-only by instruction`;
-- do not claim its sandbox is read-only unless the effective child state is confirmed;
-- give it no reason to use mutating tools;
-- treat mutation as a protocol failure;
-- keep all advice root-facing.
+A saved advisor requests `sandbox_mode = "read-only"`, but live parent permission overrides may be reapplied to children. Keep the behavioral prohibition on edits and mutation even with the requested sandbox.
 
-For a saved advisor, request a read-only sandbox and retain the same instructions because live parent overrides may win.
+Advisor failure is never approval. A configured advisor is required for a non-trivial executor plan unless the user explicitly marks it best-effort. Transport failure, malformed output, missing context, or wrong route becomes `advisor unavailable`; stop before executor work by default, or disclose and continue under the root only in best-effort mode.
 
 ## Goals and task lifetime
 
-This skill does not create, start, pause, or modify a Goal. If the user already started one, use the selected seats inside that active workflow.
+This skill does not create, start, pause, clear, or alter a Goal. If the user already runs a Goal, the routing policy works inside the same Codex delegation flow.
 
-A task-local skill invocation is workflow context for the current request, not a documented durable team object. Include the actual work in the same invocation or mention the skill again later. Saved agents are the reusable path and require a new task.
+Even when the write API requests user-config reload, this transient installer cannot retroactively rewrite the developer policy already compiled into another task. Start a new task after setup, update, disable, or custom-agent changes.
 
-Starting a new task to load saved agents does not move an active Goal or its task history.
+A personal policy can be overridden by a trusted project's `.codex/config.toml` or a managed layer. Run status from the target workspace. “Policy installed” describes the user layer; “effective in this workspace” additionally confirms that no higher-precedence layer replaces the managed fields there. Neither status proves that the model selected for a future task activates v2.
+
+Named profile-v2 files are separate selected user layers. The default command does not start App Server with `--profile`, so its write/readback does not verify a named profile. A profile user must inspect that layer separately and ensure it does not override the four routing fields, or use the task-local fallback.
+
+## Concurrency and service tier
+
+V2 defaults to four total active threads, including the root. That means up to three concurrent children by default. Root plus five children would require six total, but this plugin never changes the limit or forces five children. Codex should parallelize only independent slices with non-overlapping write ownership.
+
+Child service tier can inherit from the parent when supported. There is no portable “force standard tier” spawn setting that works across current catalogs. If allowance savings are the priority, do not enable Fast/priority on the root.
+
+## Truthful route states
+
+Use precise language:
+
+- `native policy installed`: managed user policy exists; activation still depends on root model and effective workspace config;
+- `pinned custom agent available`: matching role loaded, not yet used;
+- `route accepted`: exact controls were accepted and validated by the current tool;
+- `unverified prompt preference`: no exact control available;
+- `used and confirmed`: only when the client explicitly exposes effective runtime model/provider/effort metadata;
+- `inherited root — requested child model was not used`;
+- `unavailable`: provider/model/selector cannot run;
+- `none`: advisor disabled.
+
+Requested text, a config file, or child prose alone is not proof that a model ran.
 
 ## Usage and savings language
 
-Keep four concepts separate:
+Keep these concepts separate:
 
-- **Raw tokens:** all input, cached input, output, context, and tool-result tokens processed. Subagents can increase this total.
-- **Codex credits:** token usage translated through model-specific rates. The current rate card prices Luna at 20% of Sol for input, cached input, and output.
-- **Included limits:** shared five-hour usage plus any applicable weekly limits. Real consumption varies by model, context, reasoning, tools, retrieval, caching, and plan.
-- **Other-provider usage:** separate allowance or billing that cannot be merged into a universal percentage.
+- **Raw tokens:** every input, cached input, output, context, and tool-result token. Subagents can increase this total.
+- **Codex credits:** token usage weighted by model-specific rates.
+- **Included limits:** shared five-hour usage plus any applicable weekly limits; real consumption depends on model, context, reasoning, tools, caching, tier, and plan.
+- **Other-provider usage:** separate billing or allowance.
 
-The defensible “about 65%” example is credit math, not message-range math:
+The defensible “about 65%” example is:
 
 ```text
 20% Sol + 80% Luna at 20% of Sol's token credit rate
@@ -183,26 +271,12 @@ The defensible “about 65%” example is credit math, not message-range math:
 = 0.36, or about 64% fewer credits before orchestration overhead
 ```
 
-Never promise 65% fewer raw tokens, 65% more included allowance, a fixed weekly saving, lower API spend across providers, or 5× more completed work. Advisor calls, copied context, retries, and parallel workers may shrink or erase the saving.
-
-## Truthful seat states
-
-Use precise states:
-
-- `pinned custom agent available`: matching saved role loaded, not yet used;
-- `live route available`: current interface accepted exact child controls;
-- `unverified prompt preference`: prompt steering only;
-- `used and confirmed`: child route confirmed after spawn;
-- `inherited root — requested child model was not used`;
-- `unavailable`: provider/model/selector inaccessible;
-- `none`: optional advisor disabled.
-
-Never infer the child model from requested text or a saved file alone.
+Never promise 65% fewer raw tokens, a fixed weekly saving, a universal monetary saving, or five times more completed work.
 
 ## Primary sources
 
 - [OpenAI: Subagents and custom agents](https://learn.chatgpt.com/docs/agent-configuration/subagents)
-- [OpenAI: Build skills](https://learn.chatgpt.com/docs/build-skills)
+- [OpenAI: Codex App Server](https://learn.chatgpt.com/docs/app-server)
 - [OpenAI: Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)
 - [OpenAI: Codex pricing and usage limits](https://learn.chatgpt.com/docs/pricing)
 - [Anthropic: Building effective agents](https://www.anthropic.com/engineering/building-effective-agents)

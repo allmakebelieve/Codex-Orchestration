@@ -39,10 +39,14 @@ LEGACY_CONFIG_MARKERS = {
 }
 LEGACY_LAYER_MARKERS = {ROUTING_MARKER, PREVIOUS_ROUTING_MARKER}
 
-EXECUTOR_NAME = "codex_orchestration_executor"
-ADVISOR_NAME = "codex_orchestration_advisor"
-EXECUTOR_FILENAME = "codex-orchestration-executor.toml"
-ADVISOR_FILENAME = "codex-orchestration-advisor.toml"
+DEFAULT_EXECUTOR_NAME = "codex_orchestration_executor"
+DEFAULT_ADVISOR_NAME = "codex_orchestration_advisor"
+DEFAULT_EXECUTOR_FILENAME = "codex-orchestration-executor.toml"
+DEFAULT_ADVISOR_FILENAME = "codex-orchestration-advisor.toml"
+EXECUTOR_NAME = DEFAULT_EXECUTOR_NAME
+ADVISOR_NAME = DEFAULT_ADVISOR_NAME
+EXECUTOR_FILENAME = DEFAULT_EXECUTOR_FILENAME
+ADVISOR_FILENAME = DEFAULT_ADVISOR_FILENAME
 LEGACY_EXECUTOR_LAYER = "executor-model.toml"
 LEGACY_ADVISOR_LAYER = "advisor-model.toml"
 LEGACY_V1_DEFAULT_FILENAME = "orchestrated_executor.toml"
@@ -111,6 +115,14 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Override CODEX_HOME for personal scope only.",
     )
+    parser.add_argument(
+        "--personal-route-names",
+        action="store_true",
+        help=(
+            "Use stable, CODEX_HOME-specific personal role names so project roles "
+            "from older installations cannot shadow the global native route."
+        ),
+    )
     executor = parser.add_mutually_exclusive_group(required=True)
     executor.add_argument("--executor-model")
     executor.add_argument(
@@ -146,7 +158,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help=(
             "Back up and remove exact, fully validated output from prior "
-            "Codex-Orchestration/configure-agent-team formats. Root model and "
+            "known legacy Codex-Orchestration formats. Root model and "
             "agents.max_* settings are preserved."
         ),
     )
@@ -156,6 +168,25 @@ def parse_args() -> argparse.Namespace:
 
 def toml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=True)
+
+
+def select_agent_identities(personal_base: Path, scoped_personal: bool) -> None:
+    """Select fixed project names or stable collision-resistant personal names."""
+
+    global EXECUTOR_NAME, ADVISOR_NAME, EXECUTOR_FILENAME, ADVISOR_FILENAME
+    if scoped_personal:
+        suffix = hashlib.sha256(
+            os.fsencode(str(personal_base.expanduser().resolve()))
+        ).hexdigest()[:12]
+        EXECUTOR_NAME = f"codex_orchestration_executor_{suffix}"
+        ADVISOR_NAME = f"codex_orchestration_advisor_{suffix}"
+        EXECUTOR_FILENAME = f"codex-orchestration-executor-{suffix}.toml"
+        ADVISOR_FILENAME = f"codex-orchestration-advisor-{suffix}.toml"
+    else:
+        EXECUTOR_NAME = DEFAULT_EXECUTOR_NAME
+        ADVISOR_NAME = DEFAULT_ADVISOR_NAME
+        EXECUTOR_FILENAME = DEFAULT_EXECUTOR_FILENAME
+        ADVISOR_FILENAME = DEFAULT_ADVISOR_FILENAME
 
 
 def parse_toml(text: str, label: str) -> dict[str, Any]:
@@ -2546,6 +2577,15 @@ def main() -> int:
                 "--codex-home is personal-scope only. In project scope, set the "
                 "actual CODEX_HOME environment instead of bypassing collision checks."
             )
+        if args.personal_route_names and args.scope != "personal":
+            raise ConfigurationError(
+                "--personal-route-names requires --scope personal."
+            )
+        if args.personal_route_names and args.migrate_legacy:
+            raise ConfigurationError(
+                "--personal-route-names cannot be combined with --migrate-legacy; "
+                "migrate fixed legacy roles separately before creating the scoped route."
+            )
         if args.remove_advisor and (args.advisor_effort or args.advisor_provider):
             raise ConfigurationError(
                 "--remove-advisor cannot be combined with advisor effort or provider flags."
@@ -2583,6 +2623,7 @@ def main() -> int:
             or (Path(os.environ["CODEX_HOME"]) if os.environ.get("CODEX_HOME") else None)
             or Path.home() / ".codex"
         ).expanduser().absolute()
+        select_agent_identities(personal_base, args.personal_route_names)
         base = project_base if args.scope == "project" else personal_base
 
         config_path = base / "config.toml"
@@ -2595,6 +2636,9 @@ def main() -> int:
             executor_path: "executor",
             advisor_path: "advisor",
         }
+        if args.personal_route_names:
+            print(f"Executor agent name: {EXECUTOR_NAME}")
+            print(f"Advisor agent name: {ADVISOR_NAME}")
         for path in (
             config_path,
             agents_dir,

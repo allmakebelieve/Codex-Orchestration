@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.0 — 2026-07-10
+
+- Make one-time, config-first routing the primary workflow: setup once, then use Codex normally.
+- Add native setup, status, update, and disable through Codex App Server's atomic config API.
+- Route same-provider executors with exact model, effort, and `fork_turns = "none"` inputs.
+- Keep the selected task model as root orchestrator and let Codex decide whether delegation helps.
+- Make the advisor truly optional: omission now means `none`.
+- Preserve custom agents as the durable and cross-provider route.
+- Give personal provider-pinned roles stable home-specific names and reject missing or project-shadowed agent routes.
+- Capability-test the active, PATH, known Desktop, and explicitly supplied Codex clients before writing newer fields.
+- Configure and restore `tool_namespace = "agents"` for the validated v2 route; live Desktop testing showed the default `collaboration` namespace rejected expanded model metadata while `agents` spawned Luna at `xhigh`.
+- Clarify that metadata visibility plus the `agents` namespace exposes the needed controls but still does not choose Luna; `usage_hint_text` supplies the executor route.
+- Keep the unnecessary Sol/Terra v2 force flag omitted.
+- Preserve unrelated TOML, comments, concurrency settings, and pre-setup routing values on disable.
+- Add native-policy setup/restore lifecycle validation plus generated routing-contract tests.
+- Rewrite the README, ASCII flow, role explanations, config-only comparison, compatibility guidance, and savings claim in plain language.
+
 ## 0.3.0 — 2026-07-10
 
 - Treat the current Codex task model as the only orchestrator.
