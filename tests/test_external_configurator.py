@@ -831,6 +831,37 @@ class ExternalConfiguratorTests(unittest.TestCase):
                 "CAPABILITY_VERIFIED",
             )
 
+    def test_gate0_never_qualifies_from_decorated_stdout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            backend = FakeBackend()
+            prepared(home, backend)
+            decorated = f"prompt echo {CONFIG.GATE0_SIGNAL} sensitive-stdout"
+            completed = mock.Mock(returncode=0, stdout=decorated, stderr="")
+            with mock.patch.object(
+                CONFIG.external_credentials, "credential_ready", return_value=True
+            ), mock.patch.object(
+                CONFIG.subprocess,
+                "run",
+                side_effect=[gate0_help_result(), completed],
+            ) as run:
+                with self.assertRaises(CONFIG.ExternalConfigurationError) as failure:
+                    CONFIG.run_gate0(
+                        home,
+                        "openrouter",
+                        "moonshotai/kimi-k3",
+                        "max",
+                        Path("/safe/codex"),
+                        acknowledge_billing=True,
+                    )
+
+            self.assertEqual(run.call_count, 2)
+            self.assertNotIn("sensitive-stdout", str(failure.exception))
+            registry, _ = CONFIG.load_registry(home)
+            provider = registry["providers"]["openrouter"]
+            self.assertFalse(provider["qualified"])
+            self.assertNotEqual(provider["state"], "CAPABILITY_VERIFIED")
+
 
 if __name__ == "__main__":
     unittest.main()
