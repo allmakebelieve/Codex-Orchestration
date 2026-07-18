@@ -61,9 +61,17 @@ class ExternalCliTrustTests(unittest.TestCase):
             else:
                 path = source
                 record = TRUST.attest(path, publisher="Example, Inc.")
-            path.write_bytes(path.read_bytes() + b"changed")
-            if os.name == "posix":
-                path.chmod(0o700)
+            with path.open("r+b", buffering=0) as handle:
+                original = handle.read(1)
+                self.assertEqual(len(original), 1)
+                handle.seek(0)
+                handle.write(bytes((original[0] ^ 1,)))
+                handle.flush()
+                os.fsync(handle.fileno())
+            _, changed_digest = TRUST.fingerprint(path)
+            self.assertNotEqual(
+                f"sha256:{changed_digest}", record["fingerprint"]
+            )
             with self.assertRaisesRegex(TRUST.CliTrustError, "CLI_CHANGED"):
                 TRUST.verify(record)
 
