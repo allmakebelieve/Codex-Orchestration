@@ -304,7 +304,15 @@ class PreflightTests(unittest.TestCase):
             for path in (REPO_ROOT / "tests").glob("test_external_*.py")
         }
         self.assertTrue(expected)
-        self.assertTrue(expected.issubset(set(captured[0])))
+        observed = {module for batch in captured for module in batch}
+        self.assertTrue(expected.issubset(observed))
+        external_batches = [
+            batch for batch in captured if set(batch).intersection(expected)
+        ]
+        self.assertEqual(
+            external_batches,
+            [[module] for module in PREFLIGHT.EXTERNAL_PORTABILITY_MODULES],
+        )
 
 
 if __name__ == "__main__":

@@ -19,6 +19,20 @@ CI_TARGETS = {"quality", "test", "lifecycle", "legacy", "portability"}
 LOCAL_TARGETS = {"quick", "full"}
 ALL_TARGETS = LOCAL_TARGETS | CI_TARGETS
 EXACT_SHA_RE = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
+PORTABILITY_BASE_MODULES = (
+    "tests.test_inspect_models",
+    "tests.test_packaging",
+    "tests.test_skill_contract",
+)
+EXTERNAL_PORTABILITY_MODULES = (
+    "tests.test_external_cli_trust",
+    "tests.test_external_configurator",
+    "tests.test_external_credentials",
+    "tests.test_external_providers",
+    "tests.test_external_readiness",
+    "tests.test_external_registry",
+    "tests.test_external_subscription",
+)
 
 
 class CheckResult(NamedTuple):
@@ -328,22 +342,20 @@ def ci_checks(
             compile_check(root),
             unittest_check(
                 root,
-                "portability-tests",
-                [
-                    "tests.test_inspect_models",
-                    "tests.test_packaging",
-                    "tests.test_skill_contract",
-                    "tests.test_external_cli_trust",
-                    "tests.test_external_configurator",
-                    "tests.test_external_credentials",
-                    "tests.test_external_providers",
-                    "tests.test_external_readiness",
-                    "tests.test_external_registry",
-                    "tests.test_external_subscription",
-                ],
+                "portability-base-tests",
+                list(PORTABILITY_BASE_MODULES),
                 timeout=600,
             ),
         ]
+        results.extend(
+            unittest_check(
+                root,
+                f"portability-{module.rsplit('.', 1)[-1].replace('_', '-')}",
+                [module],
+                timeout=300,
+            )
+            for module in EXTERNAL_PORTABILITY_MODULES
+        )
         if os.name == "nt":
             results.append(
                 unittest_check(
