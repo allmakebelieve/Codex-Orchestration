@@ -646,6 +646,17 @@ class ExternalConfiguratorTests(unittest.TestCase):
                 stdout="MALICIOUS MODEL OUTPUT WITH sensitive-test-value",
                 stderr="sensitive-test-value",
             )
+            observed_configs: list[dict[str, object]] = []
+
+            def run_gate0(command, **kwargs):
+                if command[-1] == "--help":
+                    return gate0_help_result()
+                config_path = Path(kwargs["cwd"]) / "config.toml"
+                observed_configs.append(
+                    CONFIG.tomllib.loads(config_path.read_text(encoding="utf-8"))
+                )
+                return completed
+
             with mock.patch.object(
                 CONFIG.external_credentials, "credential_ready", return_value=True
             ), mock.patch.object(
@@ -655,7 +666,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
             ) as sanitized, mock.patch.object(
                 CONFIG.subprocess,
                 "run",
-                side_effect=[gate0_help_result(), completed],
+                side_effect=run_gate0,
             ) as run:
                 with self.assertRaises(CONFIG.ExternalConfigurationError) as failure:
                     CONFIG.run_gate0(
@@ -670,7 +681,10 @@ class ExternalConfiguratorTests(unittest.TestCase):
             sanitized.assert_called_once_with()
             self.assertEqual(run.call_count, 2)
             command = run.call_args.args[0]
+            self.assertEqual(command[:2], ["/safe/codex", "exec"])
             self.assertIn("--ephemeral", command)
+            self.assertIn("--skip-git-repo-check", command)
+            self.assertEqual(command[command.index("--sandbox") + 1], "read-only")
             self.assertIn("--output-last-message", command)
             self.assertEqual(run.call_args.kwargs["stdout"], CONFIG.subprocess.DEVNULL)
             self.assertEqual(run.call_args.kwargs["stderr"], CONFIG.subprocess.DEVNULL)
@@ -683,6 +697,14 @@ class ExternalConfiguratorTests(unittest.TestCase):
                 },
             )
             self.assertNotEqual(run.call_args.kwargs["env"]["CODEX_HOME"], str(home))
+            self.assertEqual(len(observed_configs), 1)
+            gate0_config = observed_configs[0]
+            self.assertEqual(gate0_config["model"], "moonshotai/kimi-k3")
+            self.assertEqual(gate0_config["model_provider"], "openrouter")
+            self.assertEqual(gate0_config["model_reasoning_effort"], "max")
+            openrouter = gate0_config["model_providers"]["openrouter"]
+            self.assertEqual(openrouter["base_url"], "https://openrouter.ai/api/v1")
+            self.assertEqual(openrouter["wire_api"], "responses")
             registry, _ = CONFIG.load_registry(home)
             provider = registry["providers"]["openrouter"]
             self.assertFalse(provider["qualified"])
@@ -809,6 +831,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
             fake.write_text(
                 f"#!{sys.executable}\n"
                 "from pathlib import Path\n"
+                "import os\n"
                 "import sys\n"
                 "args = sys.argv[1:]\n"
                 "if args == ['exec', '--help']:\n"
@@ -816,6 +839,20 @@ class ExternalConfiguratorTests(unittest.TestCase):
                 "          '  -s, --sandbox <MODE>\\n      [possible values: read-only]\\n'\n"
                 "          '  -o, --output-last-message <FILE>')\n"
                 "    raise SystemExit(0)\n"
+                "required_args = ['--ephemeral', '--skip-git-repo-check', "
+                "'--sandbox', 'read-only', '--output-last-message']\n"
+                "if any(value not in args for value in required_args):\n"
+                "    raise SystemExit(42)\n"
+                "config = (Path(os.environ['CODEX_HOME']) / 'config.toml').read_text()\n"
+                "required_config = [\n"
+                "    'model = \\\"moonshotai/kimi-k3\\\"',\n"
+                "    'model_provider = \\\"openrouter\\\"',\n"
+                "    'model_reasoning_effort = \\\"max\\\"',\n"
+                "    'base_url = \\\"https://openrouter.ai/api/v1\\\"',\n"
+                "    'wire_api = \\\"responses\\\"',\n"
+                "]\n"
+                "if any(value not in config for value in required_config):\n"
+                "    raise SystemExit(43)\n"
                 "target = Path(args[args.index('--output-last-message') + 1])\n"
                 f"target.write_text({CONFIG.GATE0_SIGNAL!r}, encoding='utf-8')\n"
                 "print('Codex header\\nprompt echoed\\nprovider output\\ntokens used: 12')\n",
