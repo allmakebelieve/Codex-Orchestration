@@ -17,9 +17,12 @@
 - Preserve Claude Fable 5 as the only sealed first-party subscription adapter, with
   its existing no-tools/no-persistence bridge, first-party login checks, and runtime
   model metadata.
-- Include an unqualified `moonshotai/kimi-k3` candidate from user-supplied evidence
-  at `medium` effort. It cannot become callable until the exact route passes Gate 0;
-  no current OpenRouter listing was inferred into a different Kimi ID.
+- Include OpenRouter's officially listed `moonshotai/kimi-k3` route, based on its
+  model page and endpoint metadata reviewed 2026-07-18, with a 1,048,576-token
+  context window and `max` as its only supported reasoning effort. `auto` resolves
+  to `max`; every other effort is rejected without clamping. Each installation
+  remains unqualified until the exact OpenRouter/Kimi/max tuple passes one
+  explicitly billing-authorized isolated Gate 0.
 - Verify Gate 0 CLI controls before any billable command and read only Codex's
   bounded `--output-last-message` artifact, never decorated process output. The
   Windows portability job performs a real temporary Credential Manager round trip;
