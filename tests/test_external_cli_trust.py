@@ -69,10 +69,6 @@ class ExternalCliTrustTests(unittest.TestCase):
     def test_version_errors_withhold_output_and_sensitive_env_is_removed(self) -> None:
         secret = "TOP-SECRET-PROVIDER-OUTPUT"
         completed = mock.Mock(returncode=1, stdout=secret, stderr=secret)
-        with mock.patch.object(TRUST.subprocess, "run", return_value=completed):
-            with self.assertRaises(TRUST.CliTrustError) as failure:
-                TRUST.version(Path("/safe/cli"))
-        self.assertNotIn(secret, str(failure.exception))
         with mock.patch.dict(
             os.environ,
             {
@@ -90,9 +86,15 @@ class ExternalCliTrustTests(unittest.TestCase):
                 "KEEP_ME": "yes",
             },
             clear=True,
-        ):
+        ), mock.patch.object(
+            TRUST.subprocess, "run", return_value=completed
+        ) as run:
+            with self.assertRaises(TRUST.CliTrustError) as failure:
+                TRUST.version(Path("/safe/cli"))
             environment = TRUST.sanitized_environment()
+        self.assertNotIn(secret, str(failure.exception))
         self.assertEqual(environment, {"PATH": "/safe/bin", "KEEP_ME": "yes"})
+        self.assertEqual(run.call_args.kwargs["env"], environment)
 
 
 if __name__ == "__main__":

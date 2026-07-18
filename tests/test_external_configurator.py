@@ -663,6 +663,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
                         acknowledge_billing=True,
                     )
             self.assertNotIn("sensitive-test-value", str(failure.exception))
+            self.assertEqual(run.call_count, 2)
             command = run.call_args.args[0]
             self.assertIn("--ephemeral", command)
             self.assertIn("--output-last-message", command)
@@ -673,6 +674,10 @@ class ExternalConfiguratorTests(unittest.TestCase):
                 os.fspath(run.call_args.kwargs["cwd"]),
             )
             self.assertNotEqual(run.call_args.kwargs["env"]["CODEX_HOME"], str(home))
+            registry, _ = CONFIG.load_registry(home)
+            provider = registry["providers"]["openrouter"]
+            self.assertFalse(provider["qualified"])
+            self.assertNotEqual(provider["state"], "CAPABILITY_VERIFIED")
 
     def test_gate0_uses_legal_transitions_and_cannot_requalify_a_ready_route(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
