@@ -1,6 +1,19 @@
 # Changelog
 
-## 0.6.0 — Unreleased
+## 0.7.0 — Unreleased
+
+- Add `/codex-orchestration --update`, a canonical-marketplace-only wrapper around
+  Codex's native plugin upgrade/install commands. It rejects local or unexpected
+  sources, malformed candidates, downgrades, source drift, version drift, and
+  enabled-state drift without removing the plugin or touching routing, credentials,
+  chats, or sessions.
+- Add an optional first-class Designer seat with exact direct-model effort or
+  custom/external-agent routing, bounded root-directed design authority, status and
+  task-local reporting, and native routing schema/policy version 4.
+- Preserve schemas 1–3 as valid legacy states with no Designer and migrate them on
+  the next explicit setup while retaining their original disable snapshot.
+
+## 0.6.0 — 2026-07-18
 
 - Add security-first External Model roles that remain outside the Codex Desktop
   model picker and never replace the root provider or model.

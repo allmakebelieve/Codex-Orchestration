@@ -23,6 +23,21 @@ non-secret state under `CODEX_HOME`. External setup never writes top-level `mode
 or `model_provider`, never edits OpenAI authentication, and never reads, migrates,
 or deletes chat/session storage.
 
+The explicit plugin updater delegates its only writes to Codex's native
+`plugin marketplace upgrade` and `plugin add` commands. Before mutation it requires
+the exact installed plugin identity, canonical HTTPS GitHub marketplace URL, and
+expected non-symlinked marketplace path. After refresh it validates a bounded,
+single-link manifest, canonical repository identity, and strictly nondecreasing
+SemVer before install; afterward it re-reads Codex's plugin inventory and requires
+the exact candidate version, original enabled state, and original trusted source.
+Local, SSH, redirected, query-bearing, unexpected, malformed, and downgrade sources
+fail closed. The updater removes credential-bearing, Git/SSH hook, and common
+language-runtime injection variables from the child environment, never echoes native
+command diagnostics, never removes the
+old plugin, and never reads or writes routing state, provider state, credentials,
+config, chats, or sessions. A failure after Codex reports install is surfaced as a
+verification failure rather than falsely claiming rollback or success.
+
 Provider API keys are accepted only by a hidden local prompt outside chat and are
 stored in the operating-system credential store. Codex retrieves a key at request
 time through documented command-backed auth and a stable helper under `CODEX_HOME`;
@@ -69,6 +84,15 @@ metadata to contain the pinned Fable primary plus only explicitly allowlisted Cl
 Code helpers. The managed workflow authorizes only root to call planning tools, but
 MCP does not provide caller identity; that caller boundary remains
 instruction-enforced rather than server-authenticated.
+
+Routing schema/policy version 4 adds the optional Designer field while retaining
+strict validation for schemas 1–3. Legacy schemas cannot smuggle a Designer key,
+and Designer cannot use the privileged Fable MCP route. Designer authority is
+policy-bounded: it reports only to root, cannot contact other seats or spawn
+descendants, may edit only explicitly delegated design artifacts, and cannot alter
+the canonical plan, implementation code, approvals, or Executor release. These
+behavioral limits are instruction-enforced; normal Codex sandbox and approval
+controls remain the mechanical boundary.
 
 External providers receive delegated prompt content and may retain it under their
 own policies. OS credential stores, first-party subscription CLIs, Codex itself, and

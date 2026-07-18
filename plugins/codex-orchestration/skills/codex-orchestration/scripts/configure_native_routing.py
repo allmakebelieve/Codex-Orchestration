@@ -39,8 +39,8 @@ except ModuleNotFoundError as exc:  # pragma: no cover - Python < 3.11
     raise SystemExit("Python 3.11 or newer is required (missing tomllib).") from exc
 
 
-POLICY_VERSION = 3
-STATE_SCHEMA = 3
+POLICY_VERSION = 4
+STATE_SCHEMA = 4
 STATE_FILENAME = ".codex-orchestration-routing.json"
 PROBE_VALUE = "CODEX_ORCHESTRATION_CAPABILITY_PROBE"
 PLUGIN_ID = "codex-orchestration@codex-orchestration"
@@ -58,7 +58,7 @@ MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:+/@-]{0,199}$")
 AGENT_RE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 EFFORT_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 PERSONAL_MANAGED_ROLE_RE = re.compile(
-    r"^codex_orchestration_(?:executor|advisor|planner)_[0-9a-f]{12}$"
+    r"^codex_orchestration_(?:executor|advisor|planner|designer)_[0-9a-f]{12}$"
 )
 CUSTOM_AGENT_MANAGED_MARKER = (
     "# Managed by codex-orchestration. Standalone custom agent v2."
@@ -129,6 +129,15 @@ def parse_args() -> argparse.Namespace:
         help="Exact supported advisor effort, or auto.",
     )
 
+    designer = parser.add_mutually_exclusive_group()
+    designer.add_argument("--designer-model", help="Optional exact designer model ID.")
+    designer.add_argument("--designer-agent", help="Optional loaded designer agent name.")
+    parser.add_argument(
+        "--designer-effort",
+        default="auto",
+        help="Exact supported designer effort, or auto.",
+    )
+
     parser.add_argument("--codex-bin", default="codex")
     parser.add_argument(
         "--compat-bin",
@@ -175,6 +184,12 @@ def _validate_args(args: argparse.Namespace) -> None:
             args.advisor_model,
             args.advisor_agent,
             args.advisor_fable,
+            args.designer_model,
+            args.designer_agent,
+            args.executor_effort != "auto",
+            args.planner_effort != "auto",
+            args.advisor_effort != "auto",
+            args.designer_effort != "auto",
         )
     ):
         raise ConfigurationError("--status does not accept seat settings.")
@@ -188,6 +203,12 @@ def _validate_args(args: argparse.Namespace) -> None:
             args.advisor_model,
             args.advisor_agent,
             args.advisor_fable,
+            args.designer_model,
+            args.designer_agent,
+            args.executor_effort != "auto",
+            args.planner_effort != "auto",
+            args.advisor_effort != "auto",
+            args.designer_effort != "auto",
         )
     ):
         raise ConfigurationError("--disable does not accept seat settings.")
@@ -195,7 +216,8 @@ def _validate_args(args: argparse.Namespace) -> None:
         args.executor_model or args.executor_agent
     ):
         raise ConfigurationError(
-            "Setup requires --executor-model or --executor-agent. Advisor omission means none."
+            "Setup requires --executor-model or --executor-agent. "
+            "Advisor omission means none. Designer omission means none."
         )
     if args.executor_agent and args.executor_effort != "auto":
         raise ConfigurationError(
@@ -209,6 +231,10 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ConfigurationError(
             "A custom advisor agent owns its effort; omit --advisor-effort."
         )
+    if args.designer_agent and args.designer_effort != "auto":
+        raise ConfigurationError(
+            "A custom designer agent owns its effort; omit --designer-effort."
+        )
     if args.planner_fable:
         normalize_fable_effort(args.planner_effort)
     if args.advisor_fable:
@@ -221,9 +247,11 @@ def _validate_args(args: argparse.Namespace) -> None:
         ("executor model", args.executor_model, MODEL_RE),
         ("planner model", args.planner_model, MODEL_RE),
         ("advisor model", args.advisor_model, MODEL_RE),
+        ("designer model", args.designer_model, MODEL_RE),
         ("executor agent", args.executor_agent, AGENT_RE),
         ("planner agent", args.planner_agent, AGENT_RE),
         ("advisor agent", args.advisor_agent, AGENT_RE),
+        ("designer agent", args.designer_agent, AGENT_RE),
     ):
         if value is not None and not pattern.fullmatch(value):
             raise ConfigurationError(f"Invalid {label}: {value!r}.")
@@ -231,6 +259,7 @@ def _validate_args(args: argparse.Namespace) -> None:
         ("executor effort", args.executor_effort),
         ("planner effort", args.planner_effort),
         ("advisor effort", args.advisor_effort),
+        ("designer effort", args.designer_effort),
     ):
         if value != "auto" and not EFFORT_RE.fullmatch(value):
             raise ConfigurationError(f"Invalid {label}: {value!r}.")
@@ -383,7 +412,7 @@ class AppServer:
                     "clientInfo": {
                         "name": "codex_orchestration_installer",
                         "title": "Codex Orchestration Installer",
-                        "version": "0.6.0",
+                        "version": "0.7.0",
                     },
                     "capabilities": {"experimentalApi": True},
                 },
@@ -713,6 +742,7 @@ def verify_agent_routes(
     executor: dict[str, Any],
     planner: dict[str, Any] | None,
     advisor: dict[str, Any] | None,
+    designer: dict[str, Any] | None,
 ) -> list[Path]:
     """Require personal role files and reject current-project shadowing."""
 
@@ -722,6 +752,7 @@ def verify_agent_routes(
         ("Executor", executor),
         ("Planner", planner),
         ("Advisor", advisor),
+        ("Designer", designer),
     ):
         if route is None or route.get("kind") != "agent":
             continue
@@ -924,7 +955,7 @@ def _referenced_agent_names(state: dict[str, Any] | None) -> set[str]:
     names: set[str] = set()
     if not isinstance(state, dict):
         return names
-    for key in ("executor", "planner", "advisor"):
+    for key in ("executor", "planner", "advisor", "designer"):
         route = state.get(key)
         if isinstance(route, dict) and route.get("kind") == "agent":
             name = route.get("agent")
@@ -946,11 +977,14 @@ def build_policy(
     executor: dict[str, Any],
     planner: dict[str, Any] | None,
     advisor: dict[str, Any] | None,
+    designer: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     has_direct_route = executor["kind"] == "model" or (
         planner is not None and planner["kind"] == "model"
     ) or (
         advisor is not None and advisor["kind"] == "model"
+    ) or (
+        designer is not None and designer["kind"] == "model"
     )
     provider_guard = (
         "Direct model overrides retain the root provider. Before using a direct "
@@ -983,6 +1017,21 @@ def build_policy(
             else "No Advisor is configured. Do not create an Advisor review step."
         )
     )
+    designer_mode = (
+        "After any required plan approval, the root may send bounded visual, UX, "
+        "interaction, information-architecture, or design-system work to the "
+        "configured Designer. The root supplies approved requirements, exact "
+        "deliverables, constraints, and any owned design artifacts. Designer may "
+        "edit only explicitly delegated design artifacts; otherwise it returns a "
+        "design handoff. It does not revise the canonical plan, change implementation "
+        "code, or release Executor. The root validates the handoff and decides what "
+        "Executor receives."
+        if designer is not None
+        else (
+            "No Designer is configured. The root owns design decisions or delegates "
+            "them through ordinary bounded Executor work when useful."
+        )
+    )
     mode = f"""{MANAGED_MARKER}
 This adds model routing to Codex's existing multi-agent flow; it is not a second scheduler.
 
@@ -992,6 +1041,8 @@ If you are the root task model, you are the orchestrator. Own intent, planning, 
 
 {advisor_mode}
 
+{designer_mode}
+
 The root owns the plan version, cumulative findings ledger, review count, validation, adjudication, and release to Executor. There is no Finalizer seat. For Advisor rounds two through five, send only the current plan and version plus a compact cumulative ledger, not prior transcripts. Ask the Advisor to confirm or contest dispositions without blindly repeating accepted findings. Reject a stale plan version or an invalid or incomplete ledger and halt before Executor.
 
 On PLAN_REVISE, record the latest finding IDs before revision. After the Planner returns, validate and merge each INCORPORATED or reasoned REJECTED disposition into the cumulative ledger before another Advisor call. A round-five PLAN_REVISE halts before Executor and produces a non-approval artifact containing the latest plan and version, full ledger, latest findings, and choices available to the user. It must not claim approval. Any required Planner or Advisor route failure also halts before Executor. Only an explicit current-task best-effort instruction changes failure handling: Planner failure permits the root to take over planning for the remaining rounds; Advisor failure may proceed only with the result labeled NOT_ADVISOR_APPROVED. No best-effort setting is persisted.
@@ -1000,7 +1051,7 @@ When executor delegation materially improves speed, cost, quality, or context is
 
 Explicit user instructions win, including no-subagents and task-local seat overrides. Persistent and task-local Planner and Advisor routes must remain distinct: reject the same direct model ID, the same custom-agent name, or Fable in both seats. This policy does not create or change a Goal, weaken approvals, alter permissions, or force a worker count.
 
-Planner and Advisor are policy-isolated, root-directed seats: they cannot contact each other or Executors, spawn descendants, edit files, execute work, or release Executor. They return only to the root. Fable MCP requests do not carry caller identity, so caller isolation is instruction-enforced even though the bridge itself disables tools and persistence. If you are a spawned child, stay inside the supplied packet, report only to the root, never call planning tools, and never spawn descendants. An Executor never redesigns the root plan or contacts Planner or Advisor.
+Planner and Advisor are policy-isolated, root-directed seats: they cannot contact each other, Designer, or Executors, spawn descendants, edit files, execute work, or release Executor. They return only to the root. Designer is also root-directed: it cannot contact Planner, Advisor, or Executor, spawn descendants, redesign the root plan, change implementation code, or release Executor. Designer may edit only explicitly delegated design artifacts. Fable MCP requests do not carry caller identity, so caller isolation is instruction-enforced even though the bridge itself disables tools and persistence. If you are a spawned child, stay inside the supplied packet, report only to the root, never call planning tools, and never spawn descendants. An Executor never redesigns the root plan or contacts Planner, Advisor, or Designer.
 """
     if planner is not None and planner["kind"] == "fable":
         planner_hint = (
@@ -1036,6 +1087,15 @@ Planner and Advisor are policy-isolated, root-directed seats: they cannot contac
         )
     else:
         advisor_hint = "No advisor route is configured."
+    if designer is not None:
+        designer_hint = (
+            "For delegated design work, call this tool with "
+            f"{_spawn_route(designer)}, fork_turns = \"none\". Send approved "
+            "requirements, bounded deliverables, explicit design-artifact ownership, "
+            "constraints, and the required handoff format."
+        )
+    else:
+        designer_hint = "No Designer route is configured."
     usage = f"""{MANAGED_MARKER}
 If you are the root task model, you are the orchestrator. Apply these routes only to children you decide to create.
 
@@ -1044,6 +1104,8 @@ For delegated executor work, call this tool with {_spawn_route(executor)}, fork_
 {planner_hint}
 
 {advisor_hint}
+
+{designer_hint}
 
 {provider_guard}
 
@@ -1217,8 +1279,10 @@ def _status(
             print(f"Executor: {_route_summary(state['executor'])}")
             planner = state.get("planner")
             advisor = state.get("advisor")
+            designer = state.get("designer")
             print(f"Planner: {_route_summary(planner) if planner else 'root'}")
             print(f"Advisor: {_route_summary(advisor) if advisor else 'none'}")
+            print(f"Designer: {_route_summary(designer) if designer else 'none'}")
             fable_routes = [
                 route
                 for route in (planner, advisor)
@@ -1241,6 +1305,7 @@ def _status(
                     state["executor"],
                     planner,
                     advisor,
+                    designer,
                 )
             except (ConfigurationError, KeyError, TypeError) as exc:
                 print(f"Custom-agent route: unavailable — {exc}")
@@ -1309,6 +1374,7 @@ def _prepare_setup_state(
     executor: dict[str, Any],
     planner: dict[str, Any] | None,
     advisor: dict[str, Any] | None,
+    designer: dict[str, Any] | None,
     config_path: Path,
     replace_existing: bool,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1537,6 +1603,7 @@ def _prepare_setup_state(
         "executor": executor,
         "planner": planner,
         "advisor": advisor,
+        "designer": designer,
         "managed": managed,
         "previous": previous,
         "scalar_origin": scalar_origin,
@@ -1689,7 +1756,12 @@ def main() -> int:
                 return _disable(app, config, version, state, args.apply)
 
             catalog: dict[str, dict[str, Any]] = {}
-            if args.executor_model or args.planner_model or args.advisor_model:
+            if (
+                args.executor_model
+                or args.planner_model
+                or args.advisor_model
+                or args.designer_model
+            ):
                 try:
                     catalog = load_models(app)
                 except ConfigurationError:
@@ -1714,6 +1786,7 @@ def main() -> int:
 
             planner: dict[str, Any] | None = None
             advisor: dict[str, Any] | None = None
+            designer: dict[str, Any] | None = None
             fable_auth: dict[str, str] | None = None
             fable_server = (
                 select_fable_server()
@@ -1766,6 +1839,22 @@ def main() -> int:
                     "server": fable_server,
                 }
 
+            if args.designer_model:
+                designer_effort = resolve_model_effort(
+                    "Designer",
+                    args.designer_model,
+                    args.designer_effort,
+                    catalog,
+                    args.confirm_unlisted_models,
+                )
+                designer = {
+                    "kind": "model",
+                    "model": args.designer_model,
+                    "effort": designer_effort,
+                }
+            elif args.designer_agent:
+                designer = {"kind": "agent", "agent": args.designer_agent}
+
             validate_planning_routes(planner, advisor)
             fable_efforts = {
                 route["effort"]
@@ -1781,8 +1870,9 @@ def main() -> int:
                 executor,
                 planner,
                 advisor,
+                designer,
             )
-            mode, usage = build_policy(executor, planner, advisor)
+            mode, usage = build_policy(executor, planner, advisor, designer)
             new_state, edits, rollback = _prepare_setup_state(
                 config,
                 state,
@@ -1791,6 +1881,7 @@ def main() -> int:
                 executor,
                 planner,
                 advisor,
+                designer,
                 app.config_path,
                 args.replace_existing_policy,
             )
@@ -1799,6 +1890,7 @@ def main() -> int:
             print(f"Executor: {_route_summary(executor)}")
             print(f"Planner: {_route_summary(planner) if planner else 'root'}")
             print(f"Advisor: {_route_summary(advisor) if advisor else 'none'}")
+            print(f"Designer: {_route_summary(designer) if designer else 'none'}")
             if args.planner_fable and args.planner_effort in FABLE_EFFORT_ALIASES:
                 print(
                     f"Planner effort alias: {args.planner_effort} -> "

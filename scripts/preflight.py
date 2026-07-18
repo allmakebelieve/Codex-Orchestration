@@ -22,6 +22,7 @@ EXACT_SHA_RE = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 PORTABILITY_BASE_MODULES = (
     "tests.test_inspect_models",
     "tests.test_packaging",
+    "tests.test_plugin_update",
     "tests.test_skill_contract",
 )
 EXTERNAL_PORTABILITY_MODULES = (
@@ -189,6 +190,7 @@ def quick_checks(root: Path, *, base_sha: str, head_sha: str | None) -> list[Che
     ]
     modules = [
         "tests.test_packaging",
+        "tests.test_plugin_update",
         "tests.test_skill_contract",
         "tests.test_routing_state",
         "tests.test_release_check",

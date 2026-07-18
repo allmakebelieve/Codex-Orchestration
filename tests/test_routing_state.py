@@ -63,8 +63,14 @@ def genuine_state(schema: int) -> dict[str, object]:
     }
     if schema == 2:
         state["advisor"] = fable_route()
-    if schema == 3:
+    if schema >= 3:
         state["planner"] = fable_route()
+    if schema == 4:
+        state["designer"] = {
+            "kind": "model",
+            "model": "gpt-designer",
+            "effort": "high",
+        }
     if schema >= 2:
         managed["mcp"] = {
             "fable-advisor-python3": True,
@@ -78,8 +84,8 @@ def genuine_state(schema: int) -> dict[str, object]:
 
 
 class RoutingStateTests(unittest.TestCase):
-    def test_genuine_schemas_one_two_and_three_are_accepted(self) -> None:
-        for schema in (1, 2, 3):
+    def test_genuine_schemas_one_through_four_are_accepted(self) -> None:
+        for schema in (1, 2, 3, 4):
             with self.subTest(schema=schema):
                 state = genuine_state(schema)
                 self.assertIs(STATE.validate_routing_state(state), state)
@@ -100,7 +106,7 @@ class RoutingStateTests(unittest.TestCase):
         self.assertIs(STATE.validate_routing_state(state), state)
 
     def test_full_negative_invariant_matrix_fails_closed(self) -> None:
-        baseline = genuine_state(3)
+        baseline = genuine_state(4)
 
         def schema(value: object):
             return lambda state: state.__setitem__("schema", value)
@@ -109,8 +115,8 @@ class RoutingStateTests(unittest.TestCase):
             return lambda state: state.__setitem__("policy_version", value)
 
         mutations = [
-            *( (f"schema {value!r}", schema(value)) for value in (True, 1.0, "3", None, 0, 4) ),
-            *( (f"policy {value!r}", policy(value)) for value in (True, 3.0, "3", None, 0, 4, 2) ),
+            *( (f"schema {value!r}", schema(value)) for value in (True, 1.0, "4", None, 0, 5) ),
+            *( (f"policy {value!r}", policy(value)) for value in (True, 4.0, "4", None, 0, 5, 3) ),
             ("missing top key", lambda state: state.pop("managed_by")),
             ("extra top key", lambda state: state.__setitem__("future", True)),
             ("wrong owner", lambda state: state.__setitem__("managed_by", "other")),
@@ -134,6 +140,7 @@ class RoutingStateTests(unittest.TestCase):
             ("snapshot wrong value type", lambda state: state["previous"].update(metadata={"known": True, "present": True, "value": 1})),
             ("executor null", lambda state: state.__setitem__("executor", None)),
             ("executor Fable", lambda state: state.__setitem__("executor", fable_route())),
+            ("designer Fable", lambda state: state.__setitem__("designer", fable_route())),
             ("model route missing effort", lambda state: state["executor"].pop("effort")),
             ("model route extra key", lambda state: state["executor"].update(future=True)),
             ("model route bad model", lambda state: state["executor"].update(model="bad model")),
@@ -164,6 +171,7 @@ class RoutingStateTests(unittest.TestCase):
             ("scalar metadata integer", lambda state: state.update(scalar_origin=True, managed_feature={"enabled": True, "hide_spawn_agent_metadata": 0, "tool_namespace": "agents", "multi_agent_mode_hint_text": state["managed"]["mode"], "usage_hint_text": state["managed"]["usage"]})),
             ("scalar table extra key", lambda state: state.update(scalar_origin=True, managed_feature={"enabled": True, "hide_spawn_agent_metadata": False, "tool_namespace": "agents", "multi_agent_mode_hint_text": state["managed"]["mode"], "usage_hint_text": state["managed"]["usage"], "future": True})),
             ("legacy future Planner field", lambda state: (state.update(schema=2, policy_version=2), state.__setitem__("planner", None))),
+            ("legacy future Designer field", lambda state: (state.update(schema=3, policy_version=3), state.__setitem__("designer", None))),
             ("future nested snapshot field", lambda state: state["previous"]["mode"].update(future=True)),
         ]
 
@@ -174,7 +182,7 @@ class RoutingStateTests(unittest.TestCase):
                 with self.assertRaises(STATE.RoutingStateError):
                     STATE.validate_routing_state(state)
 
-    def test_schema_one_and_two_reject_future_surfaces(self) -> None:
+    def test_legacy_schemas_reject_future_surfaces(self) -> None:
         scenarios = []
         schema_one = genuine_state(1)
         schema_one["planner"] = None
@@ -189,6 +197,10 @@ class RoutingStateTests(unittest.TestCase):
         schema_two = genuine_state(2)
         schema_two["planner"] = None
         scenarios.append(("schema 2 planner", schema_two))
+        for schema in (1, 2, 3):
+            legacy = genuine_state(schema)
+            legacy["designer"] = None
+            scenarios.append((f"schema {schema} designer", legacy))
 
         for label, state in scenarios:
             with self.subTest(label=label), self.assertRaises(STATE.RoutingStateError):

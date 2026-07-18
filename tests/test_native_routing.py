@@ -339,7 +339,8 @@ class NativeRoutingTests(unittest.TestCase):
         executor = {"kind": "model", "model": "gpt-5.6-luna", "effort": "xhigh"}
         planner = {"kind": "model", "model": "gpt-5.6-sol", "effort": "high"}
         advisor = {"kind": "model", "model": "gpt-5.6-terra", "effort": "high"}
-        mode, usage = NATIVE.build_policy(executor, planner, advisor)
+        designer = {"kind": "model", "model": "gpt-5.6-luna", "effort": "high"}
+        mode, usage = NATIVE.build_policy(executor, planner, advisor, designer)
 
         self.assertIn("root task model, you are the orchestrator", mode)
         self.assertIn("Codex still decides whether a plan or subagent helps", mode)
@@ -354,8 +355,11 @@ class NativeRoutingTests(unittest.TestCase):
         self.assertIn("stale plan version", mode)
         self.assertIn("invalid or incomplete ledger", mode)
         self.assertIn("There is no Finalizer seat", mode)
+        self.assertIn("configured Designer", mode)
+        self.assertIn("design artifacts", mode)
+        self.assertIn("or release Executor", mode)
         self.assertIn("cannot contact each other", mode)
-        self.assertIn("cannot contact each other or Executors", mode)
+        self.assertIn("cannot contact each other, Designer, or Executors", mode)
         self.assertLess(
             mode.index("configured Planner drafts"),
             mode.index("fresh self-contained review call"),
@@ -371,7 +375,8 @@ class NativeRoutingTests(unittest.TestCase):
         self.assertIn('model = "gpt-5.6-luna"', usage)
         self.assertIn('reasoning_effort = "xhigh"', usage)
         self.assertIn('model = "gpt-5.6-sol"', usage)
-        self.assertGreaterEqual(usage.count('fork_turns = "none"'), 3)
+        self.assertIn("For delegated design work", usage)
+        self.assertGreaterEqual(usage.count('fork_turns = "none"'), 4)
         self.assertIn('Never use fork_turns = "all"', usage)
         self.assertIn("task-local Planner and Advisor must still be distinct", usage)
         self.assertIn("same direct model ID", usage)
@@ -451,6 +456,52 @@ class NativeRoutingTests(unittest.TestCase):
         self.assertEqual(invalid.returncode, 2)
         self.assertIn("Invalid planner model", invalid.stderr)
 
+    def test_designer_argument_validation(self) -> None:
+        exclusive = self.run_script(
+            "--executor-model",
+            "gpt-5.6-luna",
+            "--designer-model",
+            "gpt-5.6-sol",
+            "--designer-agent",
+            "designer_agent",
+            check=False,
+        )
+        self.assertEqual(exclusive.returncode, 2)
+        self.assertIn("not allowed with argument", exclusive.stderr)
+
+        effort = self.run_script(
+            "--executor-model",
+            "gpt-5.6-luna",
+            "--designer-agent",
+            "designer_agent",
+            "--designer-effort",
+            "high",
+            check=False,
+        )
+        self.assertEqual(effort.returncode, 2)
+        self.assertIn("custom designer agent owns its effort", effort.stderr)
+
+        invalid = self.run_script(
+            "--executor-model",
+            "gpt-5.6-luna",
+            "--designer-model",
+            "bad model",
+            check=False,
+        )
+        self.assertEqual(invalid.returncode, 2)
+        self.assertIn("Invalid designer model", invalid.stderr)
+
+        for action in ("--status", "--disable"):
+            with self.subTest(action=action):
+                result = self.run_script(
+                    action,
+                    "--designer-effort",
+                    "high",
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("does not accept seat settings", result.stderr)
+
     def test_capability_probe_checks_the_complete_routing_surface(self) -> None:
         completed = subprocess.CompletedProcess([], 0, stdout="supported")
         with mock.patch.object(NATIVE.subprocess, "run", return_value=completed) as run:
@@ -500,6 +551,7 @@ class NativeRoutingTests(unittest.TestCase):
         self.assertIn("Native policy: installed and effective", status.stdout)
         self.assertIn("V2 activation: not inferred", status.stdout)
         self.assertIn("Executor: gpt-5.6-luna@xhigh", status.stdout)
+        self.assertIn("Designer: none", status.stdout)
         self.assertIn("Advisor: none", status.stdout)
         self.assertIn("V2 tool namespace: agents", status.stdout)
         self.assertIn("Routing validation: not performed", status.stdout)
@@ -513,7 +565,7 @@ class NativeRoutingTests(unittest.TestCase):
         self.assertEqual(feature, {"max_concurrent_threads_per_session": 5})
         self.assertFalse((self.home / NATIVE.STATE_FILENAME).exists())
 
-    def test_direct_planner_setup_status_and_require_effective(self) -> None:
+    def test_direct_planner_designer_setup_status_and_require_effective(self) -> None:
         setup = self.run_script(
             "--executor-model",
             "gpt-5.6-luna",
@@ -525,22 +577,28 @@ class NativeRoutingTests(unittest.TestCase):
             "gpt-5.6-terra",
             "--advisor-effort",
             "high",
+            "--designer-model",
+            "gpt-5.6-luna",
+            "--designer-effort",
+            "medium",
             "--apply",
         )
         self.assertIn("Planner: gpt-5.6-sol@xhigh", setup.stdout)
         state = json.loads(
             (self.home / NATIVE.STATE_FILENAME).read_text(encoding="utf-8")
         )
-        self.assertEqual(state["schema"], 3)
-        self.assertEqual(state["policy_version"], 3)
+        self.assertEqual(state["schema"], 4)
+        self.assertEqual(state["policy_version"], 4)
         self.assertEqual(state["planner"]["effort"], "xhigh")
+        self.assertEqual(state["designer"]["effort"], "medium")
 
         status = self.run_script("--status", "--require-effective")
         self.assertIn("Planner: gpt-5.6-sol@xhigh", status.stdout)
+        self.assertIn("Designer: gpt-5.6-luna@medium", status.stdout)
         self.assertEqual(status.returncode, 0)
 
-    def test_legacy_state_schemas_upgrade_to_three_without_losing_restore(self) -> None:
-        for legacy_schema in (1, 2):
+    def test_legacy_state_schemas_upgrade_to_four_without_losing_restore(self) -> None:
+        for legacy_schema in (1, 2, 3):
             with self.subTest(schema=legacy_schema):
                 setup_arguments = ["--executor-model", "gpt-5.6-luna"]
                 if legacy_schema == 2:
@@ -552,7 +610,9 @@ class NativeRoutingTests(unittest.TestCase):
                 original_previous = legacy["previous"]
                 legacy["schema"] = legacy_schema
                 legacy["policy_version"] = legacy_schema
-                legacy.pop("planner", None)
+                if legacy_schema < 3:
+                    legacy.pop("planner", None)
+                legacy.pop("designer", None)
                 legacy["managed"]["mode"] = (
                     f"{NATIVE.MANAGED_MARKER}\nlegacy schema {legacy_schema} mode"
                 )
@@ -574,13 +634,16 @@ class NativeRoutingTests(unittest.TestCase):
                     "gpt-5.6-luna",
                     "--planner-model",
                     "gpt-5.6-sol",
+                    "--designer-model",
+                    "gpt-5.6-luna",
                     "--apply",
                 )
                 upgraded = json.loads(state_path.read_text(encoding="utf-8"))
-                self.assertEqual(upgraded["schema"], 3)
-                self.assertEqual(upgraded["policy_version"], 3)
+                self.assertEqual(upgraded["schema"], 4)
+                self.assertEqual(upgraded["policy_version"], 4)
                 self.assertEqual(upgraded["previous"], original_previous)
                 self.assertEqual(upgraded["planner"]["model"], "gpt-5.6-sol")
+                self.assertEqual(upgraded["designer"]["model"], "gpt-5.6-luna")
                 if legacy_schema == 2:
                     self.assertIn("mcp", upgraded["managed"])
 
@@ -596,13 +659,15 @@ class NativeRoutingTests(unittest.TestCase):
         state_path = self.home / NATIVE.STATE_FILENAME
         current = json.loads(state_path.read_text(encoding="utf-8"))
 
-        for schema, wrong_policy in ((1, 2), (2, 3), (3, 1), (3, True)):
+        for schema, wrong_policy in ((1, 2), (2, 3), (3, 4), (4, 1), (4, True)):
             with self.subTest(schema=schema, policy=wrong_policy):
                 state = json.loads(json.dumps(current))
                 state["schema"] = schema
                 state["policy_version"] = wrong_policy
                 if schema < 3:
                     state.pop("planner")
+                if schema < 4:
+                    state.pop("designer")
                 state_path.write_text(json.dumps(state), encoding="utf-8")
 
                 status = self.run_script("--status", check=False)
@@ -621,6 +686,25 @@ class NativeRoutingTests(unittest.TestCase):
                 state["schema"] = schema
                 state["policy_version"] = schema
                 state["planner"] = None
+                state_path.write_text(json.dumps(state), encoding="utf-8")
+
+                status = self.run_script("--status", check=False)
+                self.assertEqual(status.returncode, 2)
+                self.assertIn("Saved routing state is invalid", status.stderr)
+
+    def test_legacy_state_schemas_reject_designer_key_even_when_null(self) -> None:
+        self.run_script("--executor-model", "gpt-5.6-luna", "--apply")
+        state_path = self.home / NATIVE.STATE_FILENAME
+        current = json.loads(state_path.read_text(encoding="utf-8"))
+
+        for schema in (1, 2, 3):
+            with self.subTest(schema=schema):
+                state = json.loads(json.dumps(current))
+                state["schema"] = schema
+                state["policy_version"] = schema
+                if schema < 3:
+                    state.pop("planner")
+                state["designer"] = None
                 state_path.write_text(json.dumps(state), encoding="utf-8")
 
                 status = self.run_script("--status", check=False)
@@ -1245,11 +1329,14 @@ class NativeRoutingTests(unittest.TestCase):
     def test_custom_agent_route_and_optional_advisor(self) -> None:
         self.write_personal_agent("codex_orchestration_executor")
         self.write_personal_agent("codex_orchestration_advisor")
+        self.write_personal_agent("codex_orchestration_designer")
         result = self.run_script(
             "--executor-agent",
             "codex_orchestration_executor",
             "--advisor-agent",
             "codex_orchestration_advisor",
+            "--designer-agent",
+            "codex_orchestration_designer",
             "--apply",
         )
         self.assertIn("custom agent codex_orchestration_executor", result.stdout)
@@ -1257,6 +1344,7 @@ class NativeRoutingTests(unittest.TestCase):
         usage = feature["usage_hint_text"]
         self.assertIn('agent_type = "codex_orchestration_executor"', usage)
         self.assertIn('agent_type = "codex_orchestration_advisor"', usage)
+        self.assertIn('agent_type = "codex_orchestration_designer"', usage)
 
     def test_custom_planner_shadow_and_orphan_tracking(self) -> None:
         name = "codex_orchestration_planner_012345abcdef"

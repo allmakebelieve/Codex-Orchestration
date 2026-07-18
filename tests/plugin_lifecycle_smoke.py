@@ -3,9 +3,10 @@
 
 A disposable bare Git marketplace is served over loopback HTTP. The real Codex
 CLI installs the affected Advisor-only 0.5.0 bundle, runs its documented
-marketplace-upgrade command after 0.6.0 is pushed to that Git remote, installs
-the refreshed package, verifies the new cache and Planner contract, and runs
-native-policy plus custom-agent setup/status/cleanup in isolation.
+marketplace-upgrade command after the current release is pushed to that Git
+remote, installs the refreshed package, verifies the new cache and routing
+contract, exercises the packaged updater, and runs native-policy plus
+custom-agent setup/status/cleanup in isolation.
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ PLUGIN_ID = "codex-orchestration@codex-orchestration"
 MARKETPLACE_NAME = "codex-orchestration"
 OLD_RELEASE = "a1d9c546665c3253cdcaa8fe5c0c060199a6126c"
 OLD_VERSION = "0.5.0"
-NEW_VERSION = "0.6.0"
+NEW_VERSION = "0.7.0"
 COMMAND_TIMEOUT_SECONDS = 60
 
 
@@ -502,7 +503,7 @@ def main() -> int:
             installed_root = Path(new_install["installedPath"]).resolve()
             if installed_root == old_installed_root:
                 raise SmokeFailure(
-                    "0.6.0 reused the Advisor-only 0.5.0 cache directory"
+                    f"{current_version} reused the Advisor-only 0.5.0 cache directory"
                 )
             assert_equal(
                 file_tree(installed_root),
@@ -516,6 +517,8 @@ def main() -> int:
                 "Explicit seat labels are authoritative",
                 "never reinterpret a supplied `planner:` model as an Advisor",
                 "Fable Planner uses `create_plan` and `revise_plan`",
+                "Designer may edit only explicitly delegated design artifacts",
+                "/codex-orchestration --update",
             ):
                 if expected not in installed_skill:
                     raise SmokeFailure(
@@ -530,6 +533,25 @@ def main() -> int:
                 / "fable_advisor_mcp.py"
             )
             probe_mcp_subprocess(installed_fable_mcp, cwd=project, env=env)
+
+            installed_updater = (
+                installed_root
+                / "skills"
+                / "codex-orchestration"
+                / "scripts"
+                / "update_plugin.py"
+            )
+            updater_text = installed_updater.read_text(encoding="utf-8")
+            for expected in (
+                "https://github.com/Cjbuilds/Codex-Orchestration",
+                '"marketplace"',
+                '"upgrade"',
+                '"plugin", "add", PLUGIN_ID',
+            ):
+                if expected not in updater_text:
+                    raise SmokeFailure(
+                        f"Installed updater is missing trust contract {expected!r}"
+                    )
 
             native_configurator = (
                 installed_root
@@ -550,6 +572,10 @@ def main() -> int:
                 "gpt-5.6-luna",
                 "--executor-effort",
                 "xhigh",
+                "--designer-model",
+                "gpt-5.6-luna",
+                "--designer-effort",
+                "high",
             ]
             direct_preview = run(direct_native_command, cwd=project, env=env)
             if "Dry run only" not in direct_preview.stdout:
@@ -575,6 +601,8 @@ def main() -> int:
             )
             if "Executor: gpt-5.6-luna@xhigh" not in direct_status.stdout:
                 raise SmokeFailure("Direct native status lost the selected model route")
+            if "Designer: gpt-5.6-luna@high" not in direct_status.stdout:
+                raise SmokeFailure("Direct native status lost the selected Designer route")
             run(
                 [
                     sys.executable,

@@ -25,6 +25,9 @@ NATIVE_SCRIPT = (
 ROUTING_STATE = (SKILL_ROOT / "scripts" / "routing_state.py").read_text(
     encoding="utf-8"
 )
+UPDATE_SCRIPT = (SKILL_ROOT / "scripts" / "update_plugin.py").read_text(
+    encoding="utf-8"
+)
 
 
 class SkillContractTests(unittest.TestCase):
@@ -33,6 +36,7 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("setup planner: Claude Fable 5 High", SKILL)
         self.assertIn("/codex-orchestration status", SKILL)
         self.assertIn("/codex-orchestration disable", SKILL)
+        self.assertIn("/codex-orchestration --update", SKILL)
         self.assertIn("current-task override", SKILL)
         self.assertIn("no longer needs to invoke this skill", SKILL)
 
@@ -62,9 +66,36 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("`planner:` configures only Planner", SKILL)
         self.assertIn("`advisor:` configures only Advisor", SKILL)
         self.assertIn("`executor:` configures only Executor", SKILL)
+        self.assertIn("`designer:` configures only Designer", SKILL)
+        self.assertIn("never reinterpret", SKILL)
         self.assertIn("Fable Planner uses `create_plan` and `revise_plan`", SKILL)
         self.assertIn("Fable Advisor uses `review_plan`", SKILL)
         self.assertIn("Advisor: none", SKILL)
+
+    def test_designer_is_optional_bounded_and_first_class(self) -> None:
+        self.assertIn("omitted designer means `designer: none`", SKILL)
+        self.assertIn("--designer-model", SKILL)
+        self.assertIn("--designer-effort", SKILL)
+        self.assertIn("--designer-agent", SKILL)
+        self.assertIn("Designer is a native model-or-agent seat", SKILL)
+        self.assertIn("Designer may edit only explicitly delegated design artifacts", SKILL)
+        self.assertIn("never revises the canonical plan", SKILL)
+        self.assertIn("Designer may use the same model as another seat", SKILL)
+        self.assertIn("Designer: none", SKILL)
+        self.assertIn('"designer"', ROUTING_STATE)
+
+    def test_plugin_update_is_canonical_non_destructive_and_restart_bound(self) -> None:
+        self.assertIn("## Update the plugin", SKILL)
+        self.assertIn("canonical Git marketplace", SKILL)
+        self.assertIn("It never removes", SKILL)
+        self.assertIn("touches routing, chats, or", SKILL)
+        self.assertIn("restart Codex", SKILL)
+        self.assertIn("Desktop and start a new task", SKILL)
+        self.assertIn('PLUGIN_ID = f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"', UPDATE_SCRIPT)
+        self.assertIn("_is_canonical_repository", UPDATE_SCRIPT)
+        self.assertIn("candidate_version", UPDATE_SCRIPT)
+        self.assertIn("after_enabled is not was_enabled", UPDATE_SCRIPT)
+        self.assertNotIn("plugin\", \"remove", UPDATE_SCRIPT)
 
     def test_codex_still_decides_when_to_delegate(self) -> None:
         self.assertIn("Codex decides whether a plan helps", SKILL)
