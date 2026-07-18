@@ -1170,6 +1170,23 @@ def _is_managed(value: Any) -> bool:
     return isinstance(value, str) and value.startswith(MANAGED_MARKER)
 
 
+def _strict_equal(left: Any, right: Any) -> bool:
+    """Compare config values without Python's bool/integer equivalence."""
+
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            _strict_equal(left[key], right[key]) for key in left
+        )
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            _strict_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    return left == right
+
+
 def _managed_matches(state: dict[str, Any], current: dict[str, Any]) -> bool:
     managed = state.get("managed")
     base_matches = (
@@ -1183,10 +1200,14 @@ def _managed_matches(state: dict[str, Any], current: dict[str, Any]) -> bool:
     if not base_matches:
         return False
     managed_mcp = managed.get("mcp")
-    return managed_mcp is None or all(
-        current["mcp"].get(server, MISSING) == enabled
+    if managed_mcp is not None and not all(
+        _strict_equal(current["mcp"].get(server, MISSING), enabled)
         for server, enabled in managed_mcp.items()
-    )
+    ):
+        return False
+    if isinstance(state.get("scalar_origin"), bool):
+        return _strict_equal(current["feature"], state.get("managed_feature"))
+    return True
 
 
 def _batch_write(
@@ -1670,7 +1691,7 @@ def _repair(
     )
     managed_mcp = managed.get("mcp")
     mcp_matches = managed_mcp is None or all(
-        current["mcp"].get(server, MISSING) == enabled
+        _strict_equal(current["mcp"].get(server, MISSING), enabled)
         for server, enabled in managed_mcp.items()
     )
     if not controls_match or not mcp_matches:
@@ -1689,7 +1710,7 @@ def _repair(
         repaired_feature = dict(feature)
         repaired_feature["multi_agent_mode_hint_text"] = managed["mode"]
         repaired_feature["usage_hint_text"] = managed["usage"]
-        if repaired_feature != expected_feature:
+        if not _strict_equal(repaired_feature, expected_feature):
             raise ConfigurationError(
                 "Routing repair permits only managed mode/usage drift; the converted "
                 "multi_agent_v2 table has other changes."

@@ -61,6 +61,7 @@ effective_store = home / ".fake-effective-config.json"
 version_file = home / ".fake-version"
 mutate_after_write = home / ".fake-mutate-after-write"
 mutate_namespace_after_write = home / ".fake-mutate-namespace-after-write"
+mutate_feature_after_write = home / ".fake-mutate-feature-after-write"
 mutate_state_after_write = home / ".fake-mutate-state-after-write"
 ok_overridden = home / ".fake-ok-overridden"
 overridden_returned = home / ".fake-overridden-returned"
@@ -215,6 +216,13 @@ for line in sys.stdin:
                 "collaboration",
             )
             mutate_namespace_after_write.unlink()
+        if mutate_feature_after_write.exists():
+            set_path(
+                config,
+                "features.multi_agent_v2.max_concurrent_threads_per_session",
+                9,
+            )
+            mutate_feature_after_write.unlink()
         store.write_text(json.dumps(config, sort_keys=True), encoding="utf-8")
         if mutate_state_after_write.exists():
             state_path = home / ".codex-orchestration-routing.json"
@@ -1155,6 +1163,31 @@ class NativeRoutingTests(unittest.TestCase):
         self.assertIn("Fable launcher setting changed", refused.stderr)
         self.assertEqual(self.read_fake_config(), config)
 
+    def test_repair_refuses_integer_substitution_for_fable_boolean(self) -> None:
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--advisor-fable",
+            "--apply",
+        )
+        config = self.read_fake_config()
+        feature = config["features"]["multi_agent_v2"]
+        feature["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent usage"
+        )
+        config["plugins"][NATIVE.PLUGIN_ID]["mcp_servers"][
+            "fable-advisor-python3"
+        ]["enabled"] = 1
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        refused = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn("Fable launcher setting changed", refused.stderr)
+        self.assertEqual(self.read_fake_config(), config)
+
     def test_repair_detects_a_concurrent_saved_state_edit(self) -> None:
         self.run_script(
             "--executor-model",
@@ -1225,6 +1258,60 @@ class NativeRoutingTests(unittest.TestCase):
         self.assertEqual(refused.returncode, 2)
         self.assertIn("table has other changes", refused.stderr)
         self.assertEqual(self.read_fake_config(), config)
+
+    def test_repair_refuses_noop_scalar_table_drift(self) -> None:
+        initial = {"features": {"multi_agent_v2": True}, "keep": "yes"}
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(initial), encoding="utf-8"
+        )
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--apply",
+        )
+        config = self.read_fake_config()
+        config["features"]["multi_agent_v2"]["enabled"] = False
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        refused = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(refused.returncode, 2)
+        self.assertNotIn("already matches", refused.stdout)
+        self.assertIn("another owned control", refused.stderr)
+        self.assertEqual(self.read_fake_config(), config)
+
+    def test_repair_detects_concurrent_scalar_table_drift(self) -> None:
+        initial = {"features": {"multi_agent_v2": True}, "keep": "yes"}
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(initial), encoding="utf-8"
+        )
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--apply",
+        )
+        config = self.read_fake_config()
+        config["features"]["multi_agent_v2"]["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent usage"
+        )
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        (self.home / ".fake-mutate-feature-after-write").touch()
+        repaired = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(repaired.returncode, 2)
+        self.assertIn("newer edit was preserved", repaired.stderr)
+        self.assertEqual(
+            self.read_fake_config()["features"]["multi_agent_v2"][
+                "max_concurrent_threads_per_session"
+            ],
+            9,
+        )
+        self.assertTrue((self.home / NATIVE.STATE_FILENAME).exists())
 
     def test_disable_without_state_removes_only_each_proven_hint(self) -> None:
         self.run_script(
