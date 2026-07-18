@@ -360,10 +360,10 @@ def ci_checks(
             results.append(
                 unittest_check(
                     root,
-                    "windows-fail-closed",
+                    "windows-security-descriptor",
                     [
                         "tests.test_configure_orchestration.ConfigureOrchestrationTests."
-                        "test_windows_existing_file_update_fails_closed"
+                        "test_windows_existing_file_update_preserves_security_descriptor"
                     ],
                     timeout=300,
                 )

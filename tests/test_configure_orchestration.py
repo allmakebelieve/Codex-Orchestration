@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import nullcontext, redirect_stderr, redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 import getpass
 import hashlib
 import importlib.util
@@ -2078,32 +2078,22 @@ multi_agent = true'''
             self.assertEqual(path.read_text(encoding="utf-8"), "usr\n")
             self.assertFalse((root / CONFIGURE.TRANSACTION_JOURNAL).exists())
 
-    def test_windows_existing_file_update_fails_closed(self) -> None:
+    @unittest.skipUnless(os.name == "nt", "requires Windows security descriptors")
+    def test_windows_existing_file_update_preserves_security_descriptor(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             path = root / "agent.toml"
             # Keep the fixture byte-exact on Windows; the production reader uses
             # newline="" so CRLF translation must not mask the intended branch.
             path.write_bytes(b"old\n")
-
-            with (
-                mock.patch.object(CONFIGURE.os, "name", "nt"),
-                mock.patch.object(
-                    CONFIGURE,
-                    "_transaction_directory_lock",
-                    return_value=nullcontext(),
-                ),
-            ):
-                with self.assertRaisesRegex(
-                    CONFIGURE.ConfigurationError,
-                    "NTFS security descriptors",
-                ):
-                    CONFIGURE.apply_changes_transactionally(
-                        [(path, "old\n", "new\n")],
-                        transaction_root=root,
-                    )
-
-            self.assertEqual(path.read_text(encoding="utf-8"), "old\n")
+            before = CONFIGURE._windows_security_descriptor(path)
+            self.assertIsNotNone(before)
+            CONFIGURE.apply_changes_transactionally(
+                [(path, "old\n", "new\n")],
+                transaction_root=root,
+            )
+            self.assertEqual(path.read_text(encoding="utf-8"), "new\n")
+            self.assertEqual(CONFIGURE._windows_security_descriptor(path), before)
             self.assertFalse((root / CONFIGURE.TRANSACTION_JOURNAL).exists())
 
     @unittest.skipUnless(hasattr(os, "fork"), "requires POSIX fork")

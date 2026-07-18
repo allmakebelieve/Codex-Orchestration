@@ -50,6 +50,11 @@ def _safe_target(path: Path) -> tuple[Path, os.stat_result]:
     _require(target.is_absolute(), "CLI executable must be absolute")
     _require(not target.is_symlink() and stat.S_ISREG(info.st_mode), "CLI target is unsafe")
     _require(info.st_nlink == 1, "hard-linked CLI targets are not trusted")
+    if os.name == "nt":
+        _require(
+            target.suffix.lower() in {".exe", ".com"},
+            "Windows CLI target must be a native executable",
+        )
     _require(os.access(target, os.X_OK), "CLI target is not executable")
     return target, info
 

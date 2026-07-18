@@ -1125,6 +1125,82 @@ def _acl_snapshot(path: Path) -> tuple[bytes, ...] | None:
     return tuple(completed.stdout.splitlines()[1:])
 
 
+def _windows_security_descriptor(path: Path) -> bytes | None:
+    """Read owner, group, and DACL as one self-relative descriptor."""
+
+    if os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    requested = 0x00000001 | 0x00000002 | 0x00000004
+    error_insufficient_buffer = 122
+    advapi = ctypes.WinDLL("Advapi32.dll", use_last_error=True)
+    get_file_security = advapi.GetFileSecurityW
+    get_file_security.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    get_file_security.restype = wintypes.BOOL
+    needed = wintypes.DWORD()
+    ctypes.set_last_error(0)
+    first = get_file_security(str(path), requested, None, 0, ctypes.byref(needed))
+    error = ctypes.get_last_error()
+    if first or error != error_insufficient_buffer or needed.value <= 0:
+        raise ConfigurationError(
+            f"Could not size the Windows security descriptor for {path}: {error}."
+        )
+    buffer = ctypes.create_string_buffer(needed.value)
+    if not get_file_security(
+        str(path),
+        requested,
+        ctypes.cast(buffer, ctypes.c_void_p),
+        needed.value,
+        ctypes.byref(needed),
+    ):
+        error = ctypes.get_last_error()
+        raise ConfigurationError(
+            f"Could not read the Windows security descriptor for {path}: {error}."
+        )
+    return bytes(buffer.raw[: needed.value])
+
+
+def _set_windows_security_descriptor(path: Path, descriptor: bytes | None) -> None:
+    """Apply and byte-verify owner, group, and DACL on one staged file."""
+
+    if descriptor is None:
+        return
+    if os.name != "nt":
+        raise ConfigurationError("Windows security metadata was supplied off Windows.")
+    import ctypes
+    from ctypes import wintypes
+
+    requested = 0x00000001 | 0x00000002 | 0x00000004
+    advapi = ctypes.WinDLL("Advapi32.dll", use_last_error=True)
+    set_file_security = advapi.SetFileSecurityW
+    set_file_security.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+    )
+    set_file_security.restype = wintypes.BOOL
+    buffer = ctypes.create_string_buffer(descriptor)
+    if not set_file_security(
+        str(path), requested, ctypes.cast(buffer, ctypes.c_void_p)
+    ):
+        error = ctypes.get_last_error()
+        raise ConfigurationError(
+            f"Could not apply the Windows security descriptor for {path}: {error}."
+        )
+    if _windows_security_descriptor(path) != descriptor:
+        raise ConfigurationError(
+            f"Windows security descriptor verification failed for {path}."
+        )
+
+
 def _metadata_signature(path: Path) -> tuple[Any, ...]:
     current = path.stat(follow_symlinks=False)
     return (
@@ -1135,6 +1211,7 @@ def _metadata_signature(path: Path) -> tuple[Any, ...]:
         current.st_mtime_ns,
         _xattr_snapshot(path),
         _acl_snapshot(path),
+        _windows_security_descriptor(path),
     )
 
 
@@ -1167,6 +1244,7 @@ def stage_existing_file(
     """Clone a live file's security metadata, then stage complete new bytes."""
     staged = stage_text(path, "", 0o600, staged_path)
     try:
+        windows_security = _windows_security_descriptor(path)
         cp = Path("/bin/cp")
         if os.name == "posix" and cp.is_file() and os.access(cp, os.X_OK):
             try:
@@ -1203,6 +1281,7 @@ def stage_existing_file(
                 follow_symlinks=False,
             )
         shutil.copystat(path, staged, follow_symlinks=False)
+        _set_windows_security_descriptor(staged, windows_security)
         with staged.open("rb") as handle:
             os.fsync(handle.fileno())
         if _metadata_signature(staged) != _metadata_signature(path):
@@ -2153,12 +2232,6 @@ def _apply_changes_transactionally_locked(
             if stat_result is not None and stat_result.st_nlink != 1:
                 raise ConfigurationError(
                     f"Refusing hard-linked managed configuration file {path}."
-                )
-            if os.name == "nt" and existed:
-                raise ConfigurationError(
-                    "Updating or removing an existing managed file is disabled on "
-                    "Windows because this release cannot preserve and verify NTFS "
-                    f"security descriptors safely: {path}."
                 )
             prefix = f".codex-orchestration-txn-{transaction_id}-{index}"
             item = {

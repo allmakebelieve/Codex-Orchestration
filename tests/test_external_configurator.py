@@ -85,7 +85,13 @@ class ExternalConfiguratorTests(unittest.TestCase):
             home = Path(directory)
             backend = FakeBackend()
             command = CONFIG.prepare_provider(home, "openrouter", backend)
-            self.assertEqual(command[1:], ["enroll", "--provider", "openrouter"])
+            helper = home / "codex-orchestration/bin/external_auth_helper.py"
+            self.assertEqual(
+                command,
+                CONFIG.external_credentials.enrollment_command(
+                    helper, "openrouter"
+                ),
+            )
             provider = backend.providers["openrouter"]
             self.assertEqual(set(provider), {"name", "base_url", "wire_api", "auth"})
             self.assertNotIn("model", provider)
@@ -681,7 +687,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
             sanitized.assert_called_once_with()
             self.assertEqual(run.call_count, 2)
             command = run.call_args.args[0]
-            self.assertEqual(command[:2], ["/safe/codex", "exec"])
+            self.assertEqual(command[:2], [str(Path("/safe/codex")), "exec"])
             self.assertIn("--ephemeral", command)
             self.assertIn("--skip-git-repo-check", command)
             self.assertEqual(command[command.index("--sandbox") + 1], "read-only")

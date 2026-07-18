@@ -3,6 +3,9 @@ from __future__ import annotations
 import importlib.util
 import os
 from pathlib import Path
+import platform
+import shutil
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -18,6 +21,10 @@ SPEC.loader.exec_module(TRUST)
 
 class ExternalCliTrustTests(unittest.TestCase):
     def executable(self, root: Path, version: str = "Official CLI 1.2.3") -> Path:
+        if os.name == "nt":
+            path = root / "official-cli.exe"
+            shutil.copy2(sys.executable, path)
+            return path
         path = root / "official-cli"
         path.write_text(f"#!/bin/sh\nprintf '%s\\n' '{version}'\n", encoding="utf-8")
         path.chmod(0o700)
@@ -30,15 +37,21 @@ class ExternalCliTrustTests(unittest.TestCase):
             self.assertEqual(record["path"], str(path.resolve()))
             self.assertTrue(record["fingerprint"].startswith("sha256:"))
             self.assertEqual(record["publisher"], "Example, Inc.")
-            self.assertEqual(record["version"], "Official CLI 1.2.3")
+            expected_version = (
+                f"Python {platform.python_version()}"
+                if os.name == "nt"
+                else "Official CLI 1.2.3"
+            )
+            self.assertEqual(record["version"], expected_version)
             self.assertEqual(TRUST.verify(record), path.resolve())
 
     def test_changed_bytes_or_version_fail_and_require_retrust(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = self.executable(Path(directory))
             record = TRUST.attest(path, publisher="Example, Inc.")
-            path.write_text("#!/bin/sh\nprintf 'changed\\n'\n", encoding="utf-8")
-            path.chmod(0o700)
+            path.write_bytes(path.read_bytes() + b"changed")
+            if os.name == "posix":
+                path.chmod(0o700)
             with self.assertRaisesRegex(TRUST.CliTrustError, "CLI_CHANGED"):
                 TRUST.verify(record)
 
