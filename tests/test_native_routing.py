@@ -61,6 +61,7 @@ effective_store = home / ".fake-effective-config.json"
 version_file = home / ".fake-version"
 mutate_after_write = home / ".fake-mutate-after-write"
 mutate_namespace_after_write = home / ".fake-mutate-namespace-after-write"
+mutate_state_after_write = home / ".fake-mutate-state-after-write"
 ok_overridden = home / ".fake-ok-overridden"
 overridden_returned = home / ".fake-overridden-returned"
 fail_overridden_rollback = home / ".fake-fail-overridden-rollback"
@@ -215,6 +216,16 @@ for line in sys.stdin:
             )
             mutate_namespace_after_write.unlink()
         store.write_text(json.dumps(config, sort_keys=True), encoding="utf-8")
+        if mutate_state_after_write.exists():
+            state_path = home / ".codex-orchestration-routing.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["previous"]["usage"] = {
+                "known": True,
+                "present": True,
+                "value": "CONCURRENT STATE EDIT",
+            }
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            mutate_state_after_write.unlink()
         new_version = version() + 1
         version_file.write_text(str(new_version), encoding="utf-8")
         status = "ok"
@@ -477,7 +488,7 @@ class NativeRoutingTests(unittest.TestCase):
         self.assertEqual(invalid.returncode, 2)
         self.assertIn("Invalid designer model", invalid.stderr)
 
-        for action in ("--status", "--disable"):
+        for action in ("--status", "--disable", "--repair"):
             with self.subTest(action=action):
                 result = self.run_script(
                     action,
@@ -925,6 +936,7 @@ class NativeRoutingTests(unittest.TestCase):
         )
         status = self.run_script("--status")
         self.assertIn("managed fields conflict", status.stdout)
+        self.assertIn("run --repair as a dry run", status.stdout)
         self.assertIn("Seats: suppressed", status.stdout)
         required = self.run_script(
             "--status", "--require-effective", check=False
@@ -946,6 +958,273 @@ class NativeRoutingTests(unittest.TestCase):
         feature = self.read_fake_config()["features"]["multi_agent_v2"]
         self.assertEqual(feature["tool_namespace"], "collaboration")
         self.assertTrue((self.home / NATIVE.STATE_FILENAME).exists())
+
+    def test_repair_restores_only_saved_managed_hints_and_keeps_state(self) -> None:
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--advisor-fable",
+            "--apply",
+        )
+        state_path = self.home / NATIVE.STATE_FILENAME
+        state_bytes = state_path.read_bytes()
+        state = json.loads(state_bytes)
+        config = self.read_fake_config()
+        feature = config["features"]["multi_agent_v2"]
+        feature["multi_agent_mode_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\nroute through execution_worker"
+        )
+        feature["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\nroute through verification_worker"
+        )
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+
+        status = self.run_script("--status")
+        self.assertIn("managed fields conflict", status.stdout)
+
+        preview = self.run_script("--repair")
+        self.assertIn("mode and usage", preview.stdout)
+        self.assertIn("Dry run only", preview.stdout)
+        self.assertEqual(self.read_fake_config(), config)
+        self.assertEqual(state_path.read_bytes(), state_bytes)
+
+        repaired = self.run_script("--repair", "--apply")
+        self.assertIn("Native routing policy repaired", repaired.stdout)
+        self.assertIn("fully quit and reopen Codex", repaired.stdout)
+        self.assertIn("does not change Claude Fable 5 authentication", repaired.stdout)
+        after = self.read_fake_config()
+        repaired_feature = after["features"]["multi_agent_v2"]
+        self.assertEqual(
+            repaired_feature["multi_agent_mode_hint_text"],
+            state["managed"]["mode"],
+        )
+        self.assertEqual(
+            repaired_feature["usage_hint_text"],
+            state["managed"]["usage"],
+        )
+        self.assertFalse(repaired_feature["hide_spawn_agent_metadata"])
+        self.assertEqual(repaired_feature["tool_namespace"], "agents")
+        self.assertEqual(after["unrelated"], {"keep": True})
+        self.assertEqual(state_path.read_bytes(), state_bytes)
+        healthy = self.run_script("--status", "--require-effective")
+        self.assertIn("installed and effective", healthy.stdout)
+
+    def test_repair_refuses_unmarked_or_unrelated_control_drift(self) -> None:
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--apply",
+        )
+        config = self.read_fake_config()
+        feature = config["features"]["multi_agent_v2"]
+        feature["multi_agent_mode_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent mode"
+        )
+        feature["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent usage"
+        )
+        feature["tool_namespace"] = "collaboration"
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        refused = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn("only managed mode/usage drift", refused.stderr)
+        self.assertEqual(self.read_fake_config(), config)
+
+        feature["tool_namespace"] = "agents"
+        feature["usage_hint_text"] = "USER AUTHORED USAGE"
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        refused = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn("managed ownership marker", refused.stderr)
+        self.assertEqual(self.read_fake_config(), config)
+
+    def test_repair_preserves_a_concurrent_user_edit(self) -> None:
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--apply",
+        )
+        config = self.read_fake_config()
+        feature = config["features"]["multi_agent_v2"]
+        feature["multi_agent_mode_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent mode"
+        )
+        feature["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent usage"
+        )
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        (self.home / ".fake-mutate-after-write").touch()
+        repaired = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(repaired.returncode, 2)
+        self.assertIn("newer edit was preserved", repaired.stderr)
+        self.assertEqual(
+            self.read_fake_config()["features"]["multi_agent_v2"]["usage_hint_text"],
+            "CONCURRENT USER EDIT",
+        )
+        self.assertTrue((self.home / NATIVE.STATE_FILENAME).exists())
+
+    def test_repair_requires_state_and_noops_when_already_matching(self) -> None:
+        missing = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(missing.returncode, 2)
+        self.assertIn("requires valid saved plugin state", missing.stderr)
+        self.assertFalse((self.home / ".fake-user-config.json").exists())
+
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--apply",
+        )
+        before_config = self.read_fake_config()
+        state_path = self.home / NATIVE.STATE_FILENAME
+        before_state = state_path.read_bytes()
+        no_op = self.run_script("--repair", "--apply")
+        self.assertIn("already matches", no_op.stdout)
+        self.assertEqual(self.read_fake_config(), before_config)
+        self.assertEqual(state_path.read_bytes(), before_state)
+
+    def test_repair_rolls_back_when_effective_policy_is_overridden(self) -> None:
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--apply",
+        )
+        config = self.read_fake_config()
+        feature = config["features"]["multi_agent_v2"]
+        feature["multi_agent_mode_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent mode"
+        )
+        feature["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent usage"
+        )
+        serialized = json.dumps(config)
+        (self.home / ".fake-user-config.json").write_text(
+            serialized, encoding="utf-8"
+        )
+        (self.home / ".fake-effective-config.json").write_text(
+            serialized, encoding="utf-8"
+        )
+        repaired = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(repaired.returncode, 2)
+        self.assertIn("did not become effective", repaired.stderr)
+        self.assertEqual(self.read_fake_config(), config)
+        self.assertTrue((self.home / NATIVE.STATE_FILENAME).exists())
+
+    def test_repair_refuses_fable_launcher_enablement_drift(self) -> None:
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--advisor-fable",
+            "--apply",
+        )
+        config = self.read_fake_config()
+        feature = config["features"]["multi_agent_v2"]
+        feature["multi_agent_mode_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent mode"
+        )
+        feature["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent usage"
+        )
+        config["plugins"][NATIVE.PLUGIN_ID]["mcp_servers"][
+            "fable-advisor-python3"
+        ]["enabled"] = False
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        refused = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn("Fable launcher setting changed", refused.stderr)
+        self.assertEqual(self.read_fake_config(), config)
+
+    def test_repair_detects_a_concurrent_saved_state_edit(self) -> None:
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--apply",
+        )
+        config = self.read_fake_config()
+        feature = config["features"]["multi_agent_v2"]
+        feature["multi_agent_mode_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent mode"
+        )
+        feature["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent usage"
+        )
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        (self.home / ".fake-mutate-state-after-write").touch()
+        repaired = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(repaired.returncode, 2)
+        self.assertIn("state changed concurrently", repaired.stderr)
+        state = json.loads(
+            (self.home / NATIVE.STATE_FILENAME).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            state["previous"]["usage"]["value"], "CONCURRENT STATE EDIT"
+        )
+
+    def test_repair_handles_one_hint_in_a_scalar_conversion_only(self) -> None:
+        initial = {"features": {"multi_agent_v2": True}, "keep": "yes"}
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(initial), encoding="utf-8"
+        )
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--apply",
+        )
+        state_path = self.home / NATIVE.STATE_FILENAME
+        state_bytes = state_path.read_bytes()
+        config = self.read_fake_config()
+        feature = config["features"]["multi_agent_v2"]
+        feature["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent usage"
+        )
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        preview = self.run_script("--repair")
+        self.assertIn("saved managed usage hint only", preview.stdout)
+        self.run_script("--repair", "--apply")
+        self.assertEqual(state_path.read_bytes(), state_bytes)
+
+        config = self.read_fake_config()
+        feature = config["features"]["multi_agent_v2"]
+        feature["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent usage again"
+        )
+        feature["unrelated_new_field"] = True
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        refused = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn("table has other changes", refused.stderr)
+        self.assertEqual(self.read_fake_config(), config)
 
     def test_disable_without_state_removes_only_each_proven_hint(self) -> None:
         self.run_script(

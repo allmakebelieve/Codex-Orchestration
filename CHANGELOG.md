@@ -13,6 +13,11 @@
   task-local until Codex exposes a scope-qualified agent identity.
 - Preserve schemas 1–3 as valid legacy states with no Designer and migrate them on
   the next explicit setup while retaining their original disable snapshot.
+- Add preview-first native policy repair for the narrow case where only marked
+  mode/usage hints drift from otherwise valid saved state. Repair uses App Server
+  compare-and-swap plus user/effective readback, preserves concurrent edits and
+  restore history, and distinguishes a stale loaded Fable bridge from healthy
+  first-party authentication after an update.
 
 ## 0.6.0 — 2026-07-18
 

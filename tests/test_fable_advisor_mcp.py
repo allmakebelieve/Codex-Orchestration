@@ -686,6 +686,10 @@ class FableAdvisorMcpTests(unittest.TestCase):
         )
         self.assertTrue(extra["result"]["isError"])
         self.assertIn("Unexpected tool argument", extra["result"]["content"][0]["text"])
+        error_payload = json.loads(extra["result"]["content"][0]["text"])
+        self.assertIn("fresh native status", error_payload["recovery"])
+        self.assertIn("fully quit and reopen Codex", error_payload["recovery"])
+        self.assertIn("do not re-authenticate solely", error_payload["recovery"])
 
     def test_saved_xhigh_and_legacy_max_efforts_remain_valid(self) -> None:
         for effort in ("xhigh", "max"):

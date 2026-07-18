@@ -144,6 +144,19 @@ def assert_equal(actual: Any, expected: Any, message: str) -> None:
         raise SmokeFailure(f"{message}: expected {expected!r}, got {actual!r}")
 
 
+def replace_multiline_toml_setting(text: str, key: str, value: str) -> str:
+    prefix = f'{key} = """\n'
+    start = text.find(prefix)
+    if start < 0 or text.find(prefix, start + len(prefix)) >= 0:
+        raise SmokeFailure(f"Expected exactly one multiline TOML setting {key!r}")
+    content_start = start + len(prefix)
+    suffix = '\n"""\n'
+    end = text.find(suffix, content_start)
+    if end < 0:
+        raise SmokeFailure(f"Could not find the end of multiline TOML setting {key!r}")
+    return text[:content_start] + value.rstrip("\n") + text[end:]
+
+
 def ignored(path: Path) -> bool:
     return (
         "__pycache__" in path.parts
@@ -518,6 +531,7 @@ def main() -> int:
                 "never reinterpret a supplied `planner:` model as an Advisor",
                 "Fable Planner uses `create_plan` and `revise_plan`",
                 "Designer may edit only explicitly delegated design artifacts",
+                "/codex-orchestration repair",
                 "/codex-orchestration --update",
             ):
                 if expected not in installed_skill:
@@ -584,6 +598,77 @@ def main() -> int:
                 raise SmokeFailure("Direct native status lost the selected model route")
             if "Designer: gpt-5.6-luna@high" not in direct_status.stdout:
                 raise SmokeFailure("Direct native status lost the selected Designer route")
+
+            state_path = codex_home / ".codex-orchestration-routing.json"
+            state_before_repair = state_path.read_bytes()
+            config_path = codex_home / "config.toml"
+            drifted_config = config_path.read_text(encoding="utf-8")
+            drifted_config = replace_multiline_toml_setting(
+                drifted_config,
+                "multi_agent_mode_hint_text",
+                "[codex-orchestration managed-policy v1]\n"
+                "route through execution_worker",
+            )
+            drifted_config = replace_multiline_toml_setting(
+                drifted_config,
+                "usage_hint_text",
+                "[codex-orchestration managed-policy v1]\n"
+                "route through verification_worker",
+            )
+            config_path.write_text(drifted_config, encoding="utf-8")
+            conflicted_status = run(
+                [
+                    sys.executable,
+                    str(native_configurator),
+                    "--codex-bin",
+                    codex,
+                    "--codex-home",
+                    str(codex_home),
+                    "--status",
+                ],
+                cwd=project,
+                env=env,
+            )
+            if "managed fields conflict" not in conflicted_status.stdout:
+                raise SmokeFailure("Real native status did not reproduce hint drift")
+            repair_command = [
+                sys.executable,
+                str(native_configurator),
+                "--codex-bin",
+                codex,
+                "--codex-home",
+                str(codex_home),
+                "--repair",
+            ]
+            repair_preview = run(repair_command, cwd=project, env=env)
+            if "Will restore saved managed mode and usage hints only" not in repair_preview.stdout:
+                raise SmokeFailure("Native repair preview did not remain two-field-only")
+            repair_apply = run(
+                [*repair_command, "--apply"], cwd=project, env=env
+            )
+            if "Native routing policy repaired" not in repair_apply.stdout:
+                raise SmokeFailure("Native repair did not report success")
+            assert_equal(
+                state_path.read_bytes(),
+                state_before_repair,
+                "native repair preserved saved state bytes",
+            )
+            repaired_status = run(
+                [
+                    sys.executable,
+                    str(native_configurator),
+                    "--codex-bin",
+                    codex,
+                    "--codex-home",
+                    str(codex_home),
+                    "--status",
+                    "--require-effective",
+                ],
+                cwd=project,
+                env=env,
+            )
+            if "Native policy: installed and effective" not in repaired_status.stdout:
+                raise SmokeFailure("Native repair did not restore effective policy")
             run(
                 [
                     sys.executable,

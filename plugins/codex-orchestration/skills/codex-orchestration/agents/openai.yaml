@@ -1,6 +1,6 @@
 interface:
   display_name: "Codex Orchestration"
-  short_description: "Plan, review, and build with multiple models"
+  short_description: "Plan, review, design, and build with multiple models"
   default_prompt: "Use $codex-orchestration to configure Planner, Advisor, Designer, and Executor roles."
 
 policy:

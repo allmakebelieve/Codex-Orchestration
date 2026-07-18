@@ -32,6 +32,7 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("setup executor: GPT-5.6 Luna Extra High", SKILL)
         self.assertIn("setup planner: Claude Fable 5 High", SKILL)
         self.assertIn("/codex-orchestration status", SKILL)
+        self.assertIn("/codex-orchestration repair", SKILL)
         self.assertIn("/codex-orchestration disable", SKILL)
         self.assertIn("/codex-orchestration --update", SKILL)
         self.assertIn("current-task override", SKILL)
@@ -123,6 +124,21 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn('"config/batchWrite"', NATIVE_SCRIPT)
         self.assertIn('"expectedVersion"', NATIVE_SCRIPT)
         self.assertIn('"reloadUserConfig"', NATIVE_SCRIPT)
+
+    def test_routing_repair_is_narrow_and_restart_aware(self) -> None:
+        self.assertIn("--repair --apply", SKILL)
+        self.assertIn("both live hints to retain the plugin\nownership marker", SKILL)
+        self.assertIn("Fable launcher", SKILL)
+        self.assertIn("leaves the original\nrestore snapshot", SKILL)
+        self.assertIn("preserves\na concurrent config or saved-state edit", SKILL)
+        self.assertIn("fully quit and reopen Codex", SKILL)
+        self.assertIn("Do not\nrequest re-authentication", SKILL)
+        self.assertIn("def _repair(", NATIVE_SCRIPT)
+        self.assertIn("reload_user_config=True", NATIVE_SCRIPT)
+        self.assertIn("newer edit was preserved", NATIVE_SCRIPT)
+        self.assertIn("pre-repair", NATIVE_SCRIPT)
+        self.assertIn("managed hints were restored", NATIVE_SCRIPT)
+        self.assertIn("never reads or changes credentials", REFERENCE)
 
     def test_every_different_route_uses_a_non_history_fork(self) -> None:
         self.assertIn('fork_turns = "none"', SKILL)

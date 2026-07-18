@@ -227,6 +227,7 @@ class PackagingTests(unittest.TestCase):
         self.assertTrue(routing_state.is_file())
         self.assertFalse((SKILL_ROOT / "scripts" / "update_plugin.py").exists())
         self.assertIn("config/batchWrite", native.read_text(encoding="utf-8"))
+        self.assertIn('"--repair"', native.read_text(encoding="utf-8"))
         self.assertIn('"version": "0.7.0"', native.read_text(encoding="utf-8"))
         self.assertIn("validate_routing_state", routing_state.read_text(encoding="utf-8"))
         self.assertIn("Standalone custom agent", custom.read_text(encoding="utf-8"))

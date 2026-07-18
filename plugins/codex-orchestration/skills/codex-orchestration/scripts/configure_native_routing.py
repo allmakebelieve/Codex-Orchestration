@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Preview, apply, inspect, or disable Codex-Orchestration's native routing policy.
+"""Preview, apply, inspect, repair, or disable Codex-Orchestration's routing policy.
 
 The script deliberately uses Codex App Server's config/read and config/batchWrite
 RPCs instead of rewriting config.toml itself. Codex therefore owns TOML parsing,
@@ -79,6 +79,14 @@ def parse_args() -> argparse.Namespace:
     )
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--status", action="store_true")
+    action.add_argument(
+        "--repair",
+        action="store_true",
+        help=(
+            "Restore only drifted plugin-managed mode/usage hints from valid "
+            "saved state after a preview."
+        ),
+    )
     action.add_argument("--disable", action="store_true")
     parser.add_argument(
         "--require-effective",
@@ -172,7 +180,7 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ConfigurationError("--require-effective requires --status.")
     if args.status and args.apply:
         raise ConfigurationError("--status cannot be combined with --apply.")
-    if args.status and any(
+    seat_settings = any(
         (
             args.executor_model,
             args.executor_agent,
@@ -188,27 +196,21 @@ def _validate_args(args: argparse.Namespace) -> None:
             args.advisor_effort != "auto",
             args.designer_effort != "auto",
         )
+    )
+    for action, selected in (
+        ("--status", args.status),
+        ("--repair", args.repair),
+        ("--disable", args.disable),
     ):
-        raise ConfigurationError("--status does not accept seat settings.")
-    if args.disable and any(
-        (
-            args.executor_model,
-            args.executor_agent,
-            args.planner_model,
-            args.planner_agent,
-            args.planner_fable,
-            args.advisor_model,
-            args.advisor_agent,
-            args.advisor_fable,
-            args.designer_model,
-            args.executor_effort != "auto",
-            args.planner_effort != "auto",
-            args.advisor_effort != "auto",
-            args.designer_effort != "auto",
+        if selected and seat_settings:
+            raise ConfigurationError(f"{action} does not accept seat settings.")
+    if args.repair and (
+        args.replace_existing_policy or args.confirm_unlisted_models
+    ):
+        raise ConfigurationError(
+            "--repair cannot be combined with setup replacement or model controls."
         )
-    ):
-        raise ConfigurationError("--disable does not accept seat settings.")
-    if not args.status and not args.disable and not (
+    if not args.status and not args.repair and not args.disable and not (
         args.executor_model or args.executor_agent
     ):
         raise ConfigurationError(
@@ -1258,6 +1260,11 @@ def _status(
         else:
             routing_state = "partial or user-authored"
         print(f"Native policy: {routing_state}")
+        if routing_state == "managed fields conflict with local restore state":
+            print(
+                "Recovery: run --repair as a dry run only when the saved plugin "
+                "policy should replace drifted managed hints."
+            )
         print(
             "V2 activation: not inferred by the installer; choose a v2 root "
             "model such as current Sol or Terra"
@@ -1600,6 +1607,207 @@ def _prepare_setup_state(
     return state, edits, rollback
 
 
+def _restore_pre_repair_hints(
+    app: AppServer,
+    rollback: list[dict[str, Any]],
+    expected: dict[str, Any],
+    version: str | None,
+    workspace: Path,
+) -> None:
+    result = _batch_write(app, rollback, version, reload_user_config=True)
+    if result.get("status") not in {"ok", "okOverridden"}:
+        raise ConfigurationError(
+            f"unexpected rollback status {result.get('status')!r}"
+        )
+    read_result = app.request(
+        "config/read",
+        {"includeLayers": True, "cwd": str(workspace)},
+    )
+    user_config, _ = _user_layer(read_result)
+    current = _current_values(user_config)
+    if any(current[field] != value for field, value in expected.items()):
+        raise ConfigurationError("pre-repair hint restoration could not be verified")
+
+
+def _repair(
+    app: AppServer,
+    config: dict[str, Any],
+    version: str | None,
+    state: dict[str, Any] | None,
+    workspace: Path,
+    apply: bool,
+) -> int:
+    """Restore only saved managed hint bytes after exact drift validation."""
+
+    if state is None:
+        raise ConfigurationError(
+            "Routing repair requires valid saved plugin state; run status first."
+        )
+    managed = state.get("managed")
+    if not isinstance(managed, dict):
+        raise ConfigurationError("Routing repair state has no managed values.")
+    current = _current_values(config)
+    drifted = [
+        field for field in ("mode", "usage") if current[field] != managed[field]
+    ]
+    if not drifted:
+        if _managed_matches(state, current):
+            print("Native routing policy already matches its saved managed state.")
+            return 0
+        raise ConfigurationError(
+            "Routing repair permits only managed mode/usage drift; another owned "
+            "control or Fable launcher setting changed."
+        )
+
+    if any(not _is_managed(current[field]) for field in ("mode", "usage")):
+        raise ConfigurationError(
+            "Routing repair requires both live hints to retain the managed ownership "
+            "marker; user-authored or missing text was preserved."
+        )
+    controls_match = (
+        current["metadata"] is False
+        and current["namespace"] == ROUTING_TOOL_NAMESPACE
+    )
+    managed_mcp = managed.get("mcp")
+    mcp_matches = managed_mcp is None or all(
+        current["mcp"].get(server, MISSING) == enabled
+        for server, enabled in managed_mcp.items()
+    )
+    if not controls_match or not mcp_matches:
+        raise ConfigurationError(
+            "Routing repair permits only managed mode/usage drift; another owned "
+            "control or Fable launcher setting changed."
+        )
+
+    if isinstance(state.get("scalar_origin"), bool):
+        feature = current["feature"]
+        expected_feature = state.get("managed_feature")
+        if not isinstance(feature, dict) or not isinstance(expected_feature, dict):
+            raise ConfigurationError(
+                "Routing repair cannot validate the converted multi_agent_v2 table."
+            )
+        repaired_feature = dict(feature)
+        repaired_feature["multi_agent_mode_hint_text"] = managed["mode"]
+        repaired_feature["usage_hint_text"] = managed["usage"]
+        if repaired_feature != expected_feature:
+            raise ConfigurationError(
+                "Routing repair permits only managed mode/usage drift; the converted "
+                "multi_agent_v2 table has other changes."
+            )
+
+    key_paths = {
+        "mode": "features.multi_agent_v2.multi_agent_mode_hint_text",
+        "usage": "features.multi_agent_v2.usage_hint_text",
+    }
+    edits = [
+        {
+            "keyPath": key_paths[field],
+            "value": managed[field],
+            "mergeStrategy": "replace",
+        }
+        for field in drifted
+    ]
+    rollback = [
+        {
+            "keyPath": key_paths[field],
+            "value": current[field],
+            "mergeStrategy": "replace",
+        }
+        for field in drifted
+    ]
+    rendered = " and ".join(drifted)
+    label = "hint" if len(drifted) == 1 else "hints"
+    print(f"Config: {app.config_path}")
+    print(f"Will restore saved managed {rendered} {label} only.")
+    print(
+        "Will preserve the restore snapshot, seat routes, namespace, spawn metadata, "
+        "Fable launcher enablement, credentials, chats, and sessions."
+    )
+    fable_configured = any(
+        isinstance(route, dict) and route.get("kind") == "fable"
+        for route in (state.get("planner"), state.get("advisor"))
+    )
+    if fable_configured:
+        print(
+            "This repair does not change Claude Fable 5 authentication or request "
+            "re-authentication."
+        )
+    if not apply:
+        print("Dry run only. Re-run with --repair --apply after reviewing this preview.")
+        return 0
+
+    result = _batch_write(app, edits, version, reload_user_config=True)
+    if result.get("status") == "okOverridden":
+        try:
+            _restore_pre_repair_hints(
+                app,
+                rollback,
+                {field: current[field] for field in drifted},
+                result.get("version"),
+                workspace,
+            )
+        except ConfigurationError as rollback_exc:
+            raise ConfigurationError(
+                "A higher-priority layer overrides the repaired policy, and restoring "
+                f"the pre-repair hints failed: {rollback_exc}"
+            ) from rollback_exc
+        raise ConfigurationError(
+            "A higher-priority layer overrides the repaired policy; the pre-repair "
+            "managed hints were restored."
+        )
+    if result.get("status") != "ok":
+        raise ConfigurationError(
+            f"Unexpected config write status: {result.get('status')!r}"
+        )
+
+    verify_result = app.request(
+        "config/read",
+        {"includeLayers": True, "cwd": str(workspace)},
+    )
+    verify_config, verify_version = _user_layer(verify_result)
+    verify_current = _current_values(verify_config)
+    effective_config = verify_result.get("config")
+    effective_current = _current_values(
+        effective_config if isinstance(effective_config, dict) else {}
+    )
+    if not _managed_matches(state, verify_current):
+        raise ConfigurationError(
+            "The user routing fields changed after Codex accepted the repair. That "
+            "newer edit was preserved; saved restore state remains available."
+        )
+    if not _managed_matches(state, effective_current):
+        try:
+            _restore_pre_repair_hints(
+                app,
+                rollback,
+                {field: current[field] for field in drifted},
+                verify_version,
+                workspace,
+            )
+        except ConfigurationError as rollback_exc:
+            raise ConfigurationError(
+                "Repair readback was overridden, and restoring the pre-repair hints "
+                f"failed: {rollback_exc}"
+            ) from rollback_exc
+        raise ConfigurationError(
+            "Repair did not become effective in this workspace; the pre-repair "
+            "managed hints were restored."
+        )
+
+    state_path = app.codex_home / STATE_FILENAME
+    if _read_state(state_path) != state:
+        raise ConfigurationError(
+            "Saved routing state changed concurrently during repair. It was not "
+            "overwritten; run status before any further routing change."
+        )
+
+    print(
+        "Native routing policy repaired; fully quit and reopen Codex, then start a "
+        "new task so the current policy and MCP bridge are loaded together."
+    )
+    return 0
+
+
 def _disable(
     app: AppServer,
     config: dict[str, Any],
@@ -1742,6 +1950,15 @@ def main() -> int:
             _validate_state_config(state, app.config_path)
             if args.disable:
                 return _disable(app, config, version, state, args.apply)
+            if args.repair:
+                return _repair(
+                    app,
+                    config,
+                    version,
+                    state,
+                    workspace,
+                    args.apply,
+                )
 
             catalog: dict[str, dict[str, Any]] = {}
             if (

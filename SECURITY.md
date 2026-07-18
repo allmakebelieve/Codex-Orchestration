@@ -72,8 +72,15 @@ identity. Native providers remain
 `ROUTE_ACCEPTED` unless the host exposes mechanical provider/model metadata; model
 self-report is never confirmation.
 
-Native setup/status/disable and Fable authorization retain their full-state
-validators. The bundled Fable Planner/Advisor bridge disables tools and session
+Native setup/status/repair/disable and Fable authorization retain their full-state
+validators. Repair is allowed only when valid saved state exists, both live hint
+strings retain the ownership marker, and namespace, spawn metadata, Fable launcher
+enablement, scalar-conversion shape, and all other managed values still match. It
+restores only drifted mode/usage bytes through App Server compare-and-swap, verifies
+user and effective readback, rolls back on an override, preserves a concurrent edit,
+detects concurrent saved-state replacement without overwriting it, and never changes
+restore state, authentication, credentials, chats, or sessions.
+The bundled Fable Planner/Advisor bridge disables tools and session
 persistence, strips provider override credentials, and requires runtime usage
 metadata to contain the pinned Fable primary plus only explicitly allowlisted Claude
 Code helpers. The managed workflow authorizes only root to call planning tools, but

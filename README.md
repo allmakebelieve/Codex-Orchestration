@@ -179,12 +179,20 @@ Create a Codex Goal normally, then tell Codex to use the saved workflow until th
 ```text
 /codex-orchestration status
 /codex-orchestration status --require-effective
+/codex-orchestration repair
 /codex-orchestration --update
 /codex-orchestration setup planner: Claude Fable 5 High, advisor: GPT-5.6 Sol High, designer: GPT-5.6 Terra High, executor: GPT-5.6 Luna Extra High
 /codex-orchestration disable
 ```
 
 `disable` restores the routing values that existed before setup. It does not delete user-owned custom roles.
+
+`repair` is narrower than setup or disable. When status reports that plugin-managed
+mode/usage hints conflict with otherwise intact saved state, it can restore only
+those saved hint bytes after a dry run. It refuses missing state, unmarked text,
+namespace or spawn-metadata drift, Fable launcher drift, concurrent edits, and
+higher-layer overrides. It does not rewrite restore history or touch authentication,
+credentials, chats, or sessions.
 
 ## Important limits
 
@@ -217,6 +225,11 @@ the plugin or touch routing, credentials, chats, sessions, or the model picker.
 Restart Codex Desktop and start a new task after an update; the task that launched
 the updater keeps its already loaded instructions.
 
+If a Fable call fails in the task that performed an update but fresh status reports
+`first-party login ready`, the login is healthy and the already loaded MCP bridge is
+stale. Fully quit and reopen Codex, then start a new task; do not re-authenticate
+solely for that stale-bridge condition.
+
 To move from version 0.6.x or older to 0.7.0, run the native Codex commands once:
 
 ```bash
@@ -225,7 +238,7 @@ codex plugin add codex-orchestration@codex-orchestration
 ```
 
 Version **0.6.0 or newer** is required for External Model roles; version **0.7.0
-or newer** adds `--update` and Designer. Confirm with
+or newer** adds `--update`, routing repair, and Designer. Confirm with
 `codex plugin list --json`, then restart Codex Desktop and start a new task.
 
 If the version stays old or `marketplaceSource.sourceType` is `local`, Codex is pointed at a local checkout rather than the GitHub marketplace. Run `/codex-orchestration disable` first if a saved policy is active, then remove the plugin and that marketplace registration, add `Cjbuilds/Codex-Orchestration` again, and reinstall. This does not delete the local source checkout.

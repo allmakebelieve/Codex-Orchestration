@@ -1,6 +1,6 @@
 ---
 name: codex-orchestration
-description: Build multi-model Codex workflows by assigning compatible models to roles such as planner, advisor, designer, executor, researcher, reviewer, writer, or supervisor. Use when the user invokes Codex Orchestration to update the plugin, create custom roles, define a workflow, or set up, inspect, change, disable, or temporarily override model routing. Keep the selected task model as root and preserve Codex's Goal, permissions, integration, and verification behavior.
+description: Build multi-model Codex workflows by assigning compatible models to roles such as planner, advisor, designer, executor, researcher, reviewer, writer, or supervisor. Use when the user invokes Codex Orchestration to update the plugin, create custom roles, define a workflow, or set up, inspect, repair, change, disable, or temporarily override model routing. Keep the selected task model as root and preserve Codex's Goal, permissions, integration, and verification behavior.
 ---
 
 # Codex Orchestration
@@ -24,12 +24,13 @@ Support these simple forms:
 /codex-orchestration configure external role researcher with OpenRouter model moonshotai/kimi-k3 at max
 /codex-orchestration call researcher at max — <one bounded task>
 /codex-orchestration status
+/codex-orchestration repair
 /codex-orchestration disable
 /codex-orchestration remove custom roles personally
 /codex-orchestration executor: GPT-5.6 Terra high — <one task only>
 ```
 
-`--update` securely refreshes this plugin from its canonical Git marketplace. `setup` installs or updates the personal one-time routing policy. `create project role` or `create personal role` creates native Codex custom-agent files. `status` inspects built-in routing. `disable` restores its pre-setup values.
+`--update` securely refreshes this plugin from its canonical Git marketplace. `setup` installs or updates the personal one-time routing policy. `create project role` or `create personal role` creates native Codex custom-agent files. `status` inspects built-in routing. `repair` restores only saved managed hint bytes after narrow drift validation. `disable` restores pre-setup values.
 
 `remove custom roles` cleans only verified plugin-managed advisor/executor files. Arbitrary native roles are user-owned. An invocation with seats and work but no control verb is a current-task override and must not rewrite config.
 
@@ -261,7 +262,7 @@ It uses Codex App Server's `config/read` and `config/batchWrite` APIs, not a hom
 
 If a user-authored mode or usage hint already exists, do not replace it automatically. Show the conflict. Use `--replace-existing-policy` only after the user explicitly approves replacing and later restoring those exact values.
 
-## Status, change, and disable
+## Status, repair, change, and disable
 
 For status:
 
@@ -276,6 +277,32 @@ python3 <skill-dir>/scripts/configure_native_routing.py \
 ```
 
 Run status from the target project. The first form is descriptive. Use `--require-effective` for automation and release gates; it returns nonzero for incompatible clients, conflicts, overrides, incomplete controls, an unavailable Fable or custom-agent route, or orphaned v0.4+ personal roles. Report the current task model as the orchestrator, Planner (`root` when omitted), configured Advisor, Designer, and Executor, whether the personal policy is installed and effective in that workspace, whether effective spawn controls are visible, whether the effective tool namespace is `agents`, the target config path, and checked-client compatibility. State that neither status form proves a live route or infers v2 activation for the model selected in a task; current Sol or Terra is the intended root.
+
+When status reports `managed fields conflict with local restore state`, do not run
+setup or disable over the conflict and do not assume authentication failed. A literal
+`repair` request makes the valid saved plugin state authoritative only for the
+following narrow recovery. Dry-run first, then apply only after the preview says the
+drift is limited to saved managed mode/usage hints:
+
+```bash
+python3 <skill-dir>/scripts/configure_native_routing.py \
+  --codex-bin <active-codex-binary> \
+  --repair
+
+python3 <skill-dir>/scripts/configure_native_routing.py \
+  --codex-bin <active-codex-binary> \
+  --repair --apply
+```
+
+Repair must require valid saved state and both live hints to retain the plugin
+ownership marker. It must refuse namespace, spawn-metadata, Fable launcher,
+scalar-shape, missing/unmarked hint, or other managed drift. It writes only the
+different mode/usage fields through App Server compare-and-swap, leaves the original
+restore snapshot and seat records byte-for-byte unchanged, checks user and effective
+readback, rolls the two fields back when a higher layer overrides them, and preserves
+a concurrent config or saved-state edit instead of overwriting it. It never reads or
+changes authentication, credentials, chats, or sessions. After apply, run status with
+`--require-effective` and fully quit and reopen Codex before starting a new task.
 
 To change seats, run normal `setup` again. The configurator keeps the original restore snapshot rather than treating its own managed values as user settings.
 
@@ -311,7 +338,15 @@ The plugin packages three disabled MCP launcher variants for macOS, Linux, and W
 
 Fable effort is configurable per setup. The default is `high`; supported Claude Code values are `low`, `medium`, `high`, `xhigh`, and `max`. Accept `ultra` as an alias for `max`, save the effective Claude Code value, and disclose the alias mapping in setup output. Existing saved `max` routes remain valid.
 
-The bridge exposes only bounded, read-only planning operations. `create_plan` accepts one self-contained packet and requires `PLAN_DRAFT`. `revise_plan` requires the task, canonical current plan, latest critique, and compact findings history, then requires `PLAN_REVISION` plus a findings ledger and revised plan. `review_plan` remains the Advisor operation and requires `PLAN_APPROVED` or `PLAN_REVISE`. Every call uses the same full saved-state validator as native status/disable, then requires runtime `modelUsage` to contain the pinned `claude-fable-5` primary plus only the bridge's explicit exact helper allowlist. Return every observed ID in `used_models`; an unknown additional or missing primary model makes the seat unavailable. Any auth, transport, state, format, or model-confirmation failure makes that seat unavailable; it never counts as approval. The bridge returns no account identifier or credential.
+The bridge exposes only bounded, read-only planning operations. `create_plan` accepts one self-contained packet and requires `PLAN_DRAFT`. `revise_plan` requires the task, canonical current plan, latest critique, and compact findings history, then requires `PLAN_REVISION` plus a findings ledger and revised plan. `review_plan` remains the Advisor operation and requires `PLAN_APPROVED` or `PLAN_REVISE`. Every call uses the same full saved-state validator as native status/repair/disable, then requires runtime `modelUsage` to contain the pinned `claude-fable-5` primary plus only the bridge's explicit exact helper allowlist. Return every observed ID in `used_models`; an unknown additional or missing primary model makes the seat unavailable. Any auth, transport, state, format, or model-confirmation failure makes that seat unavailable; it never counts as approval. The bridge returns no account identifier or credential.
+
+Plugin and policy updates cannot replace the MCP process already loaded into the
+current task. If a Fable call fails after an update or repair, run fresh native
+status. When status reports Claude Fable 5 `ready — first-party login`, classify the
+current tool failure as a stale loaded bridge, not an authentication failure. Do not
+request re-authentication. Fully quit and reopen Codex, then start a new task so the
+installed bridge, policy, and saved state load together. Ask for login only when the
+fresh status check itself reports authentication unavailable.
 
 The managed workflow reserves these MCP calls for the root Codex model. Current MCP requests do not carry caller identity, so the bridge cannot independently authenticate root versus child; caller isolation is instruction-enforced. The bridge still mechanically prevents tools, edits, permission prompts, and session persistence. Never describe the caller boundary as engine-enforced.
 

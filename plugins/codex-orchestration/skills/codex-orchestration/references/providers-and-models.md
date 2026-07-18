@@ -147,6 +147,18 @@ The App Server permits writes only to the user config. It performs full schema a
 
 The configurator writes each owned nested field separately, except when converting a legacy boolean feature shape. It refuses to replace user-authored hint strings unless `--replace-existing-policy` was explicitly approved. Setup verifies both the user layer and the effective config in the current workspace; it rolls back when a project or managed layer already overrides the installed policy there.
 
+`--repair` is a separate, preview-first recovery path for a valid saved state whose
+live mode and/or usage hint bytes changed while every other owned control still
+matches. Both live strings must retain the plugin marker. Namespace, spawn metadata,
+plugin-scoped Fable enablement, and any scalar-conversion table shape must match the
+saved state exactly. Repair writes only the differing hint fields using the user
+layer version, leaves seat and restore records byte-for-byte unchanged, verifies both
+user and effective readback, restores the pre-repair hints after an effective-layer
+override, and preserves a newer concurrent edit. Missing state, unmarked text, or any
+other managed drift fails closed. A concurrent saved-state replacement is reported
+without overwriting it. Repair never reads or changes credentials, auth stores,
+chats, or sessions.
+
 Restore state lives at:
 
 ```text
@@ -219,7 +231,14 @@ Claude Fable 5 is the explicit built-in exception for Planner or Advisor. The pl
 
 The bridge removes `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, and Bedrock/Vertex/Foundry selection variables from the child environment. It re-checks `claude auth status`, pins `claude-fable-5` and the saved effort, disables tools and session persistence, disables prompt suggestions, and requires JSON runtime metadata to contain that primary model. Claude Code currently reports the internal helper `claude-haiku-4-5-20251001` during valid Fable calls; the bridge permits only that exact helper ID and returns every observed ID in `used_models`. Missing Fable or any unknown additional model fails closed. Helper rotation therefore requires a reviewed plugin update rather than a wildcard. Setup and status never make a model call.
 
-The saved policy authorizes the root to call these planning tools and prohibits children from doing so. Current MCP requests provide no caller identity to the server, so that specific caller boundary is instruction-enforced, not server-authenticated. The bridge mechanically uses the same full saved-state validator as native status/disable, restricts the operation surface, and runs Fable without tools or persistence.
+An MCP process is loaded for the lifetime of its Codex task. Updating the plugin or
+repairing policy state cannot replace that already loaded process. If a current-task
+Fable call fails after either operation while a fresh native status check still
+reports a ready first-party login, the loaded bridge is stale; fully quit and reopen
+Codex and start a new task. Do not re-authenticate unless the fresh status check
+itself reports authentication unavailable.
+
+The saved policy authorizes the root to call these planning tools and prohibits children from doing so. Current MCP requests provide no caller identity to the server, so that specific caller boundary is instruction-enforced, not server-authenticated. The bridge mechanically uses the same full saved-state validator as native status/repair/disable, restricts the operation surface, and runs Fable without tools or persistence.
 
 Saved state compatibility is explicit: schema 1 must carry policy version 1 and predates Fable and Planner; schema 2 must carry policy version 2 and may authorize only the historical Fable Advisor shape; schema 3 must carry policy version 3 and adds Planner; schema 4 must carry policy version 4 and adds the optional direct-model Designer route. Schema and policy values must be actual JSON integers, not booleans or floats. Legacy state cannot contain fields introduced later; nested snapshots, scalar conversion, MCP launchers, and routes must match an emitted contract; and managed policy strings must carry the plugin marker before status, seat change, disable, or Fable trusts them. Designer cannot use Fable or a persistent unqualified agent name, while Planner/Advisor independence remains the only route-separation rule. Unknown extensions intentionally fail closed.
 
@@ -256,7 +275,7 @@ Every Advisor call is fresh and stateless. The root carries the canonical curren
 
 This skill does not create, start, pause, clear, or alter a Goal. If the user already runs a Goal, the routing policy works inside the same Codex delegation flow.
 
-Even when the write API requests user-config reload, this transient installer cannot retroactively rewrite the developer policy already compiled into another task. Start a new task after setup, update, disable, or custom-agent changes.
+Even when the write API requests user-config reload, this transient installer cannot retroactively rewrite the developer policy or MCP process already loaded into another task. Fully quit and reopen Codex after update or repair, and start a new task after setup, update, repair, disable, or custom-agent changes.
 
 A personal policy can be overridden by a trusted project's `.codex/config.toml` or a managed layer. Run status from the target workspace. “Policy installed” describes the user layer; “effective in this workspace” additionally confirms that no higher-precedence layer replaces the managed fields there. Neither status proves that the model selected for a future task activates v2.
 
