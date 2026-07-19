@@ -33,6 +33,38 @@ UNCONFIGURED -> AUTH_REQUIRED -> AUTH_READY -> CAPABILITY_VERIFIED
 No state may skip an unlisted transition. Provider self-report or model-authored text
 never establishes `USED_CONFIRMED`.
 
+## Seat-label entry
+
+A built-in seat label may select a bundled External Model without putting that model
+in the Desktop picker. The currently bundled shorthand is case-insensitive
+`Designer: Kimi K3`, which means task-local role `designer`, provider `openrouter`,
+exact model `moonshotai/kimi-k3`, and effort `max`. Omitted effort or `auto` resolves
+to `max`; every other explicit effort is rejected. Similar labels are accepted only
+after a reviewed plugin release adds an unambiguous bundled mapping.
+
+Root must inspect external status before acting. Dispatch by exact state:
+
+| Exact state | Action |
+| --- | --- |
+| Provider absent | Preview and apply clean preparation, then stop for user-owned hidden authentication. |
+| Authentication missing | Print the no-paste enrollment guidance and stop. |
+| Tuple unqualified | Request separate billing approval immediately before one Gate 0; never infer approval from the seat label. |
+| Qualified provider, role absent | Preview and apply `connect` for role `designer` with the bounded Designer purpose. |
+| `RESTART_REQUIRED` | Require a full Desktop restart and new task; do not delegate. |
+| Exact role `READY` | Run `resolve`, then delegate only to its returned loaded agent name. |
+| Role mismatch, drift, shadow, or ambiguity | Stop with the exact blocker; never overwrite, disconnect, repair, or substitute. |
+
+The explicit seat label authorizes clean preparation and clean role creation, just as
+the equivalent literal configure request does. It never authorizes credential entry,
+Gate 0 billing, a failed-probe retry, replacement, or deletion. External seat routes
+remain task-local and are never stored in native routing state. Preserve any supplied
+seats and original task across authentication, qualification, or restart boundaries.
+Adding a role stages a new restart boundary and temporarily blocks other External
+Model roles on that provider until `ready` succeeds or the staged role is disconnected;
+native GPT routes, the root model, chats, and sessions remain untouched. Clean
+preparation may add the exact audited OpenRouter provider entry when absent, but it
+never modifies, replaces, or removes a pre-existing provider entry.
+
 ## Preview-first setup
 
 Run the packaged script from the installed skill directory with Python 3.11+ and the

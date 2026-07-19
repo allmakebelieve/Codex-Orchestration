@@ -1,6 +1,20 @@
 # Changelog
 
-## 0.7.0 — Unreleased
+## 0.7.1 — Unreleased
+
+- Recognize a bare `Designer: Kimi K3` seat assignment as the audited task-local
+  External Model role `designer` instead of incorrectly reporting the route as
+  unexposed. The root now dispatches the existing status, preparation,
+  authentication, qualification, connection, restart, readiness, and resolution
+  states explicitly.
+- Preserve the no-secret and no-surprise-spend contract: the shorthand can authorize
+  clean provider preparation and role creation, but never credential entry, Gate 0
+  billing, probe retries, replacement, or deletion. Preparation may add the exact
+  audited OpenRouter provider entry when absent; it never modifies, replaces, or
+  removes existing provider entries or changes the root model, native GPT routes,
+  model picker, chats, or sessions.
+
+## 0.7.0 — 2026-07-18
 
 - Add `/codex-orchestration --update`, a canonical-source-checked orchestration of
   Codex's native plugin upgrade/install commands. It refuses disabled, local,

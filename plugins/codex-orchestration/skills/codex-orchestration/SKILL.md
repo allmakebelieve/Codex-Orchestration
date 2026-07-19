@@ -18,6 +18,7 @@ Support these simple forms:
 /codex-orchestration setup executor: GPT-5.6 Luna Extra High, advisor: Claude Fable 5 High
 /codex-orchestration setup planner: Claude Fable 5 High, advisor: GPT-5.6 Sol High, executor: GPT-5.6 Luna Extra High
 /codex-orchestration setup designer: GPT-5.6 Sol High, executor: GPT-5.6 Luna Extra High
+/codex-orchestration Planner: Claude Fable 5 High, Designer: Kimi K3
 /codex-orchestration --update
 /codex-orchestration create project role: researcher
 /codex-orchestration create personal roles: researcher, writer, reviewer
@@ -32,7 +33,7 @@ Support these simple forms:
 
 `--update` securely refreshes this plugin from its canonical Git marketplace. `setup` installs or updates the personal one-time routing policy. `create project role` or `create personal role` creates native Codex custom-agent files. `status` inspects built-in routing. `repair` restores only saved managed hint bytes after narrow drift validation. `disable` restores pre-setup values.
 
-`remove custom roles` cleans only verified plugin-managed advisor/executor files. Arbitrary native roles are user-owned. An invocation with seats and work but no control verb is a current-task override and must not rewrite config.
+`remove custom roles` cleans only verified plugin-managed advisor/executor files. Arbitrary native roles are user-owned. An invocation with native seats and work but no control verb is a current-task override and must not rewrite config. Explicit External Model seat labels are the exception: they may perform only the clean preparation, connection, and readiness writes authorized in the External Model lifecycle below.
 
 Explicit seat labels are authoritative. `planner:` configures only Planner, `advisor:` configures only Advisor, `designer:` configures only Designer, and `executor:` configures only Executor. Never infer or change a seat from a model's historical use, default role, cached description, or provider; in particular, never reinterpret a supplied `planner:` model as an Advisor or a supplied `designer:` model as an Executor. Saved defaults may fill only omitted seats and never override a seat supplied in the current invocation.
 
@@ -54,7 +55,7 @@ Because explicit skills may not reload from a bare reply, include a ready-to-cop
 
 For a task-local request, append `— <original task>`. Keep every supplied modifier. Do not lose the user's task while collecting a model choice.
 
-Before applying setup or starting task-local work, report the normalized mapping as `Planner`, `Advisor`, `Designer`, and `Executor` in that order. Compare it with the user's explicit labels. If an exact seat cannot run, report that seat as unavailable and stop under the required-route rules; never move its model to another seat. When the user omits Designer, report `Designer: none`; when the user supplies Planner and Executor but omits Advisor, report `Advisor: none`.
+Before applying setup or starting task-local work, report the normalized mapping as `Planner`, `Advisor`, `Designer`, and `Executor` in that order. Compare it with the user's explicit labels. If an exact native seat cannot run, report that seat as unavailable and stop under the required-route rules; never move its model to another seat. For an External Model seat still crossing a valid lifecycle boundary, report its exact lifecycle state and next action, not unavailable. When the user omits Designer, report `Designer: none`; when the user supplies Planner and Executor but omits Advisor, report `Advisor: none`.
 
 If an old prompt contains `orchestrator:`, explain that the current task model already owns that role. Ignore that seat instead of switching or persisting it.
 
@@ -132,6 +133,54 @@ Only bundled provider manifests are eligible. Do not turn an arbitrary URL, mode
 name, shell command, project file, or subscription CLI into a provider. Resolve the
 exact model and supported efforts from the manifest and its cited evidence. Reject
 all unsupported effort values; never clamp, alias, or silently fall back.
+
+### External models supplied as seat labels
+
+Treat a supplied built-in seat whose model unambiguously matches a bundled external
+model as an explicit External Model seat assignment. In particular, normalize
+`Designer: Kimi K3`, case-insensitively, to role `designer`, provider `openrouter`,
+model `moonshotai/kimi-k3`, and effort `max`; an omitted or `auto` effort also means
+`max`. Reject every other explicit Kimi K3 effort. This is a manifest-backed display
+name mapping, not permission to guess model IDs or accept fuzzy, dated, or `latest`
+aliases.
+
+An external Designer is not a native direct-model Designer: never pass it to `--designer-model`,
+the root-provider model catalog, or the persistent routing schema; always inspect `external status` first and compare the requested role, provider,
+model, and effort with the strict registry result. Then follow exactly one state:
+
+- If the exact role is `READY`, run read-only `resolve` and delegate only to the
+  returned agent name.
+- If the exact role is `RESTART_REQUIRED`, tell the user to fully quit and reopen
+  Codex and start a new task. In that new task, preview and apply `ready`; run `ready` and then `resolve`, and delegate only after both succeed.
+- If the provider is exact, authenticated, and `CAPABILITY_VERIFIED` or `READY`, but
+  role `designer` is absent, the explicit seat assignment authorizes clean role
+  creation: preview and apply `connect` with the bounded purpose "Produce a design
+  handoff for the root; do not edit implementation code, direct other roles, or
+  spawn descendants." Report the resulting `RESTART_REQUIRED` boundary. It does
+  not authorize replacing or disconnecting an existing role.
+- If the provider is absent, treat the explicit seat assignment like a literal
+  configure request: preview and apply only clean provider preparation, then follow
+  the existing hidden authentication flow. Preparation may add the exact audited
+  OpenRouter provider entry when absent, but never modifies or removes a pre-existing provider entry. If authentication is missing, print the required no-paste message
+  and enrollment command, then stop.
+- If the exact tuple is not qualified, request separate explicit billing approval
+  immediately before Gate 0. A seat assignment never authorizes Gate 0 billing,
+  credential entry, retries after a failed probe, or any other spend.
+- If the role exists with another provider/model, any file or helper drifts, a
+  project agent shadows it, or status is ambiguous, stop with the exact collision or
+  integrity blocker. Never overwrite, repair, disconnect, or substitute a route.
+
+At every non-ready state, describe the next exact action; do not report the requested external seat as unavailable merely because its personal agent has not been created
+or loaded yet; preserve the original task and every supplied seat while crossing an
+authentication, qualification, or restart boundary. A seat-only invocation is a
+role-provisioning request only when it contains only External Model seat labels; that
+form does not require Executor. If the invocation also supplies any native seat or
+contains task work, preserve every supplied seat and that work, then collect a missing Executor using the existing question and ready-to-copy invocation after reporting
+or progressing the external role state.
+
+External seat assignments remain task-local. The returned custom-agent name must not be persisted in native routing state because a project agent could shadow that
+unqualified name in a later workspace. This rule does not change native same-provider
+Designer setup or Claude Fable 5 Planner/Advisor routing.
 
 Native setup is preview-first and uses
 `scripts/external_configurator.py` from this skill's real installed directory. Its

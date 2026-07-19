@@ -83,6 +83,28 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("Designer: none", SKILL)
         self.assertIn('"designer"', ROUTING_STATE)
 
+    def test_bare_external_designer_label_enters_secure_role_lifecycle(self) -> None:
+        self.assertIn("Designer: Kimi K3", SKILL)
+        self.assertIn("explicit External Model seat assignment", SKILL)
+        self.assertIn("Explicit External Model seat labels are the exception", SKILL)
+        self.assertIn("never pass it to `--designer-model`", SKILL)
+        self.assertIn("inspect `external status` first", SKILL)
+        self.assertIn("role `designer`", SKILL)
+        self.assertIn("preview and apply `connect`", SKILL)
+        self.assertIn("RESTART_REQUIRED", SKILL)
+        self.assertIn("run `ready` and then `resolve`", SKILL)
+        self.assertIn("do not report the requested external seat as unavailable", SKILL)
+        self.assertIn("never authorizes Gate 0 billing", SKILL)
+        self.assertIn("Never overwrite, repair, disconnect, or substitute", SKILL)
+        self.assertIn("preserve the original task", SKILL)
+        self.assertIn("must not be persisted in native routing state", SKILL)
+        self.assertIn("report its exact lifecycle state and next action, not unavailable", SKILL)
+        self.assertIn("only External Model seat labels", SKILL)
+        self.assertIn("also supplies any native seat", SKILL)
+        self.assertIn("collect a missing Executor", SKILL)
+        self.assertIn("never modifies or removes a pre-existing provider entry", SKILL)
+        self.assertIn("never modifies, replaces, or removes a pre-existing provider entry", EXTERNAL_REFERENCE)
+
     def test_plugin_update_is_canonical_non_destructive_and_restart_bound(self) -> None:
         self.assertIn("## Update the plugin", SKILL)
         self.assertIn("canonical Git marketplace", SKILL)

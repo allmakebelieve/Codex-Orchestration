@@ -182,8 +182,17 @@ Create a Codex Goal normally, then tell Codex to use the saved workflow until th
 /codex-orchestration repair
 /codex-orchestration --update
 /codex-orchestration setup planner: Claude Fable 5 High, advisor: GPT-5.6 Sol High, designer: GPT-5.6 Terra High, executor: GPT-5.6 Luna Extra High
+/codex-orchestration Planner: Claude Fable 5 High, Designer: Kimi K3
 /codex-orchestration disable
 ```
+
+`Designer: Kimi K3` selects the audited task-local External Model role without
+adding Kimi to the Desktop picker or replacing any GPT route. Kimi K3 supports only
+`max` reasoning (`auto` maps to `max`). If the exact role is already ready, the
+plugin resolves and uses it. Otherwise it walks the secure status, preparation,
+hidden authentication, separately authorized Gate 0, connection, restart, and
+readiness states and tells you the exact next action instead of calling the route
+unavailable. The seat label never authorizes credential entry or a paid probe.
 
 `disable` restores the routing values that existed before setup. It does not delete user-owned custom roles.
 
@@ -238,7 +247,9 @@ codex plugin add codex-orchestration@codex-orchestration
 ```
 
 Version **0.6.0 or newer** is required for External Model roles; version **0.7.0
-or newer** adds `--update`, routing repair, and Designer. Confirm with
+or newer** adds `--update`, routing repair, and Designer; version **0.7.1 or newer**
+lets the natural `Designer: Kimi K3` label enter the External Model lifecycle.
+Confirm with
 `codex plugin list --json`, then restart Codex Desktop and start a new task.
 
 If the version stays old or `marketplaceSource.sourceType` is `local`, Codex is pointed at a local checkout rather than the GitHub marketplace. Run `/codex-orchestration disable` first if a saved policy is active, then remove the plugin and that marketplace registration, add `Cjbuilds/Codex-Orchestration` again, and reinstall. This does not delete the local source checkout.
