@@ -13,6 +13,7 @@ SKILL_ROOT = (
     / "codex-orchestration"
 )
 SKILL = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+README = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
 REFERENCE = (SKILL_ROOT / "references" / "providers-and-models.md").read_text(
     encoding="utf-8"
 )
@@ -121,6 +122,21 @@ Executor — GPT-5.6 Sol high: Activated
         self.assertIn("collect a missing Executor", SKILL)
         self.assertIn("never modifies or removes a pre-existing provider entry", SKILL)
         self.assertIn("never modifies, replaces, or removes a pre-existing provider entry", EXTERNAL_REFERENCE)
+
+    def test_natural_kimi_availability_question_uses_read_only_external_status(self) -> None:
+        self.assertIn("is Kimi available to use as Designer?", SKILL)
+        self.assertIn("Implicit invocation is discovery, not mutation authority", SKILL)
+        self.assertIn("run `external status`", SKILL)
+        self.assertIn(
+            "Never infer External Model availability from the currently exposed MCP or subagent",
+            SKILL,
+        )
+        self.assertIn("A visible Fable tool is not an exhaustive provider", SKILL)
+        self.assertIn("`supported`", SKILL)
+        self.assertIn("`configured`", SKILL)
+        self.assertIn("`callable now`", SKILL)
+        self.assertIn("read-only `resolve` succeeds", SKILL)
+        self.assertIn("never authorizes configuration, credentials, or spend", README)
 
     def test_plugin_update_is_canonical_non_destructive_and_restart_bound(self) -> None:
         self.assertIn("## Update the plugin", SKILL)

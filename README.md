@@ -123,6 +123,17 @@ Executor — GPT-5.6 Sol high: Activated
 model still needs authentication, qualification, connection, or a restart, the
 plugin reports that exact state and next action instead of claiming activation.
 
+You can also ask naturally without selecting the skill first:
+
+```text
+is Kimi available to use as Designer?
+```
+
+The plugin checks its External Model registry instead of guessing from the visible
+tool list. It distinguishes whether Kimi K3 is bundled and supported, configured on
+this installation, and callable in the current task. A question performs read-only
+status inspection only; it never authorizes configuration, credentials, or spend.
+
 Examples:
 
 ```text

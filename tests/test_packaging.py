@@ -278,12 +278,20 @@ class PackagingTests(unittest.TestCase):
             self.assertIn("fable_advisor_mcp.py", server["args"][-1])
         self.assertTrue((SKILL_ROOT / "scripts" / "fable_advisor_mcp.py").is_file())
 
-    def test_explicit_invocation_metadata_is_consistent(self) -> None:
+    def test_explicit_and_natural_language_invocation_metadata_is_consistent(self) -> None:
         metadata = (SKILL_ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
 
         self.assertIn("$codex-orchestration", metadata)
-        self.assertIn("allow_implicit_invocation: false", metadata)
+        self.assertIn("allow_implicit_invocation: true", metadata)
+        self.assertNotIn("allow_implicit_invocation: false", metadata)
+        self.assertIn(
+            "Use for natural-language questions or requests about whether Kimi K3",
+            skill,
+        )
+        self.assertIn("available or callable as Designer", skill)
+        self.assertIn("is Kimi available to use as Designer?", readme)
         self.assertIn("/codex-orchestration setup executor:", readme)
         self.assertIn("GPT-5.6 Luna Extra High", readme)
         self.assertIn("/codex-orchestration create project role:", readme)

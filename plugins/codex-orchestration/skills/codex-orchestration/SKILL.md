@@ -1,6 +1,6 @@
 ---
 name: codex-orchestration
-description: Build multi-model Codex workflows by assigning compatible models to roles such as planner, advisor, designer, executor, researcher, reviewer, writer, or supervisor. Use when the user invokes Codex Orchestration to update the plugin, create custom roles, define a workflow, or set up, inspect, repair, change, disable, or temporarily override model routing. Keep the selected task model as root and preserve Codex's Goal, permissions, integration, and verification behavior.
+description: Use for natural-language questions or requests about whether Kimi K3 or another audited External Model is available or callable as Designer or another role, and for assigning models to Planner, Advisor, Designer, Executor, researcher, reviewer, writer, or supervisor roles. Also use when the user invokes Codex Orchestration to update the plugin, create custom roles, define a workflow, or set up, inspect, repair, change, disable, or temporarily override model routing. Keep the selected task model as root and preserve Codex's Goal, permissions, integration, and verification behavior.
 ---
 
 # Codex Orchestration
@@ -29,7 +29,31 @@ Support these simple forms:
 /codex-orchestration disable
 /codex-orchestration remove custom roles personally
 /codex-orchestration executor: GPT-5.6 Terra high — <one task only>
+is Kimi available to use as Designer?
+can I use Kimi K3 for design?
 ```
+
+Implicit invocation is discovery, not mutation authority. A natural-language
+availability question authorizes only read-only inspection. It never authorizes
+setup, repair, provider preparation, authentication, Gate 0 spend, role creation,
+configuration writes, disconnect, or removal.
+
+For a question such as `is Kimi available to use as Designer?`, enter this skill
+implicitly and run `external status` from the installed skill before answering.
+Never infer External Model availability from the currently exposed MCP or subagent
+tool list. A visible Fable tool is not an exhaustive provider or role inventory.
+Report the result in three separate terms:
+
+- `supported`: the exact display name maps to a bundled audited manifest;
+- `configured`: the exact provider/model/effort and role exist without drift;
+- `callable now`: status is `READY` and read-only `resolve` succeeds for the exact
+  role and effort in the current workspace.
+
+Say Kimi K3 is available to use as Designer only when all three are true. Otherwise,
+say it is supported but not yet callable, name the exact lifecycle state, and give
+the next action. Never answer that the plugin does not expose Kimi merely because a
+Kimi-specific tool is absent; the route is materialized through the External Model
+lifecycle and a provider-pinned custom agent.
 
 `--update` securely refreshes this plugin from its canonical Git marketplace. `setup` installs or updates the personal one-time routing policy. `create project role` or `create personal role` creates native Codex custom-agent files. `status` inspects built-in routing. `repair` restores only saved managed hint bytes after narrow drift validation. `disable` restores pre-setup values.
 

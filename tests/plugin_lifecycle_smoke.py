@@ -531,6 +531,8 @@ def main() -> int:
                 "never reinterpret a supplied `planner:` model as an Advisor",
                 "Fable Planner uses `create_plan` and `revise_plan`",
                 "Designer may edit only explicitly delegated design artifacts",
+                "is Kimi available to use as Designer?",
+                "Implicit invocation is discovery, not mutation authority",
                 "/codex-orchestration repair",
                 "/codex-orchestration --update",
             ):
@@ -538,6 +540,18 @@ def main() -> int:
                     raise SmokeFailure(
                         f"Upgraded installed skill is missing Planner contract {expected!r}"
                     )
+
+            installed_metadata = (
+                installed_root
+                / "skills"
+                / "codex-orchestration"
+                / "agents"
+                / "openai.yaml"
+            ).read_text(encoding="utf-8")
+            if "allow_implicit_invocation: true" not in installed_metadata:
+                raise SmokeFailure(
+                    "Upgraded installed skill still blocks natural-language invocation"
+                )
 
             installed_fable_mcp = (
                 installed_root
