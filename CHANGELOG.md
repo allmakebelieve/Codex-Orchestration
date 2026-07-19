@@ -1,6 +1,25 @@
 # Changelog
 
-## 0.6.0 — Unreleased
+## 0.7.0 — Unreleased
+
+- Add `/codex-orchestration --update`, a canonical-source-checked orchestration of
+  Codex's native plugin upgrade/install commands. It refuses disabled, local,
+  missing, duplicate, or unexpected sources and verifies final source, version, and
+  enabled state without removing the plugin or touching routing, credentials, chats,
+  or sessions.
+- Add an optional first-class Designer seat with exact direct-model effort,
+  bounded root-directed design authority, status and task-local reporting, and
+  native routing schema/policy version 4. Cross-provider/custom Designers remain
+  task-local until Codex exposes a scope-qualified agent identity.
+- Preserve schemas 1–3 as valid legacy states with no Designer and migrate them on
+  the next explicit setup while retaining their original disable snapshot.
+- Add preview-first native policy repair for the narrow case where only marked
+  mode/usage hints drift from otherwise valid saved state. Repair uses App Server
+  compare-and-swap plus user/effective readback, preserves concurrent edits and
+  restore history, and distinguishes a stale loaded Fable bridge from healthy
+  first-party authentication after an update.
+
+## 0.6.0 — 2026-07-18
 
 - Add security-first External Model roles that remain outside the Codex Desktop
   model picker and never replace the root provider or model.

@@ -61,6 +61,8 @@ effective_store = home / ".fake-effective-config.json"
 version_file = home / ".fake-version"
 mutate_after_write = home / ".fake-mutate-after-write"
 mutate_namespace_after_write = home / ".fake-mutate-namespace-after-write"
+mutate_feature_after_write = home / ".fake-mutate-feature-after-write"
+mutate_state_after_write = home / ".fake-mutate-state-after-write"
 ok_overridden = home / ".fake-ok-overridden"
 overridden_returned = home / ".fake-overridden-returned"
 fail_overridden_rollback = home / ".fake-fail-overridden-rollback"
@@ -214,7 +216,24 @@ for line in sys.stdin:
                 "collaboration",
             )
             mutate_namespace_after_write.unlink()
+        if mutate_feature_after_write.exists():
+            set_path(
+                config,
+                "features.multi_agent_v2.max_concurrent_threads_per_session",
+                9,
+            )
+            mutate_feature_after_write.unlink()
         store.write_text(json.dumps(config, sort_keys=True), encoding="utf-8")
+        if mutate_state_after_write.exists():
+            state_path = home / ".codex-orchestration-routing.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["previous"]["usage"] = {
+                "known": True,
+                "present": True,
+                "value": "CONCURRENT STATE EDIT",
+            }
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            mutate_state_after_write.unlink()
         new_version = version() + 1
         version_file.write_text(str(new_version), encoding="utf-8")
         status = "ok"
@@ -339,7 +358,8 @@ class NativeRoutingTests(unittest.TestCase):
         executor = {"kind": "model", "model": "gpt-5.6-luna", "effort": "xhigh"}
         planner = {"kind": "model", "model": "gpt-5.6-sol", "effort": "high"}
         advisor = {"kind": "model", "model": "gpt-5.6-terra", "effort": "high"}
-        mode, usage = NATIVE.build_policy(executor, planner, advisor)
+        designer = {"kind": "model", "model": "gpt-5.6-luna", "effort": "high"}
+        mode, usage = NATIVE.build_policy(executor, planner, advisor, designer)
 
         self.assertIn("root task model, you are the orchestrator", mode)
         self.assertIn("Codex still decides whether a plan or subagent helps", mode)
@@ -354,8 +374,11 @@ class NativeRoutingTests(unittest.TestCase):
         self.assertIn("stale plan version", mode)
         self.assertIn("invalid or incomplete ledger", mode)
         self.assertIn("There is no Finalizer seat", mode)
+        self.assertIn("configured Designer", mode)
+        self.assertIn("design artifacts", mode)
+        self.assertIn("or release Executor", mode)
         self.assertIn("cannot contact each other", mode)
-        self.assertIn("cannot contact each other or Executors", mode)
+        self.assertIn("cannot contact each other, Designer, or Executors", mode)
         self.assertLess(
             mode.index("configured Planner drafts"),
             mode.index("fresh self-contained review call"),
@@ -371,7 +394,8 @@ class NativeRoutingTests(unittest.TestCase):
         self.assertIn('model = "gpt-5.6-luna"', usage)
         self.assertIn('reasoning_effort = "xhigh"', usage)
         self.assertIn('model = "gpt-5.6-sol"', usage)
-        self.assertGreaterEqual(usage.count('fork_turns = "none"'), 3)
+        self.assertIn("For delegated design work", usage)
+        self.assertGreaterEqual(usage.count('fork_turns = "none"'), 4)
         self.assertIn('Never use fork_turns = "all"', usage)
         self.assertIn("task-local Planner and Advisor must still be distinct", usage)
         self.assertIn("same direct model ID", usage)
@@ -451,6 +475,38 @@ class NativeRoutingTests(unittest.TestCase):
         self.assertEqual(invalid.returncode, 2)
         self.assertIn("Invalid planner model", invalid.stderr)
 
+    def test_designer_argument_validation(self) -> None:
+        external = self.run_script(
+            "--executor-model",
+            "gpt-5.6-luna",
+            "--designer-agent",
+            "designer_agent",
+            check=False,
+        )
+        self.assertEqual(external.returncode, 2)
+        self.assertIn("unrecognized arguments: --designer-agent", external.stderr)
+
+        invalid = self.run_script(
+            "--executor-model",
+            "gpt-5.6-luna",
+            "--designer-model",
+            "bad model",
+            check=False,
+        )
+        self.assertEqual(invalid.returncode, 2)
+        self.assertIn("Invalid designer model", invalid.stderr)
+
+        for action in ("--status", "--disable", "--repair"):
+            with self.subTest(action=action):
+                result = self.run_script(
+                    action,
+                    "--designer-effort",
+                    "high",
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("does not accept seat settings", result.stderr)
+
     def test_capability_probe_checks_the_complete_routing_surface(self) -> None:
         completed = subprocess.CompletedProcess([], 0, stdout="supported")
         with mock.patch.object(NATIVE.subprocess, "run", return_value=completed) as run:
@@ -500,6 +556,7 @@ class NativeRoutingTests(unittest.TestCase):
         self.assertIn("Native policy: installed and effective", status.stdout)
         self.assertIn("V2 activation: not inferred", status.stdout)
         self.assertIn("Executor: gpt-5.6-luna@xhigh", status.stdout)
+        self.assertIn("Designer: none", status.stdout)
         self.assertIn("Advisor: none", status.stdout)
         self.assertIn("V2 tool namespace: agents", status.stdout)
         self.assertIn("Routing validation: not performed", status.stdout)
@@ -513,7 +570,7 @@ class NativeRoutingTests(unittest.TestCase):
         self.assertEqual(feature, {"max_concurrent_threads_per_session": 5})
         self.assertFalse((self.home / NATIVE.STATE_FILENAME).exists())
 
-    def test_direct_planner_setup_status_and_require_effective(self) -> None:
+    def test_direct_planner_designer_setup_status_and_require_effective(self) -> None:
         setup = self.run_script(
             "--executor-model",
             "gpt-5.6-luna",
@@ -525,22 +582,28 @@ class NativeRoutingTests(unittest.TestCase):
             "gpt-5.6-terra",
             "--advisor-effort",
             "high",
+            "--designer-model",
+            "gpt-5.6-luna",
+            "--designer-effort",
+            "medium",
             "--apply",
         )
         self.assertIn("Planner: gpt-5.6-sol@xhigh", setup.stdout)
         state = json.loads(
             (self.home / NATIVE.STATE_FILENAME).read_text(encoding="utf-8")
         )
-        self.assertEqual(state["schema"], 3)
-        self.assertEqual(state["policy_version"], 3)
+        self.assertEqual(state["schema"], 4)
+        self.assertEqual(state["policy_version"], 4)
         self.assertEqual(state["planner"]["effort"], "xhigh")
+        self.assertEqual(state["designer"]["effort"], "medium")
 
         status = self.run_script("--status", "--require-effective")
         self.assertIn("Planner: gpt-5.6-sol@xhigh", status.stdout)
+        self.assertIn("Designer: gpt-5.6-luna@medium", status.stdout)
         self.assertEqual(status.returncode, 0)
 
-    def test_legacy_state_schemas_upgrade_to_three_without_losing_restore(self) -> None:
-        for legacy_schema in (1, 2):
+    def test_legacy_state_schemas_upgrade_to_four_without_losing_restore(self) -> None:
+        for legacy_schema in (1, 2, 3):
             with self.subTest(schema=legacy_schema):
                 setup_arguments = ["--executor-model", "gpt-5.6-luna"]
                 if legacy_schema == 2:
@@ -552,7 +615,9 @@ class NativeRoutingTests(unittest.TestCase):
                 original_previous = legacy["previous"]
                 legacy["schema"] = legacy_schema
                 legacy["policy_version"] = legacy_schema
-                legacy.pop("planner", None)
+                if legacy_schema < 3:
+                    legacy.pop("planner", None)
+                legacy.pop("designer", None)
                 legacy["managed"]["mode"] = (
                     f"{NATIVE.MANAGED_MARKER}\nlegacy schema {legacy_schema} mode"
                 )
@@ -574,13 +639,16 @@ class NativeRoutingTests(unittest.TestCase):
                     "gpt-5.6-luna",
                     "--planner-model",
                     "gpt-5.6-sol",
+                    "--designer-model",
+                    "gpt-5.6-luna",
                     "--apply",
                 )
                 upgraded = json.loads(state_path.read_text(encoding="utf-8"))
-                self.assertEqual(upgraded["schema"], 3)
-                self.assertEqual(upgraded["policy_version"], 3)
+                self.assertEqual(upgraded["schema"], 4)
+                self.assertEqual(upgraded["policy_version"], 4)
                 self.assertEqual(upgraded["previous"], original_previous)
                 self.assertEqual(upgraded["planner"]["model"], "gpt-5.6-sol")
+                self.assertEqual(upgraded["designer"]["model"], "gpt-5.6-luna")
                 if legacy_schema == 2:
                     self.assertIn("mcp", upgraded["managed"])
 
@@ -596,13 +664,15 @@ class NativeRoutingTests(unittest.TestCase):
         state_path = self.home / NATIVE.STATE_FILENAME
         current = json.loads(state_path.read_text(encoding="utf-8"))
 
-        for schema, wrong_policy in ((1, 2), (2, 3), (3, 1), (3, True)):
+        for schema, wrong_policy in ((1, 2), (2, 3), (3, 4), (4, 1), (4, True)):
             with self.subTest(schema=schema, policy=wrong_policy):
                 state = json.loads(json.dumps(current))
                 state["schema"] = schema
                 state["policy_version"] = wrong_policy
                 if schema < 3:
                     state.pop("planner")
+                if schema < 4:
+                    state.pop("designer")
                 state_path.write_text(json.dumps(state), encoding="utf-8")
 
                 status = self.run_script("--status", check=False)
@@ -621,6 +691,25 @@ class NativeRoutingTests(unittest.TestCase):
                 state["schema"] = schema
                 state["policy_version"] = schema
                 state["planner"] = None
+                state_path.write_text(json.dumps(state), encoding="utf-8")
+
+                status = self.run_script("--status", check=False)
+                self.assertEqual(status.returncode, 2)
+                self.assertIn("Saved routing state is invalid", status.stderr)
+
+    def test_legacy_state_schemas_reject_designer_key_even_when_null(self) -> None:
+        self.run_script("--executor-model", "gpt-5.6-luna", "--apply")
+        state_path = self.home / NATIVE.STATE_FILENAME
+        current = json.loads(state_path.read_text(encoding="utf-8"))
+
+        for schema in (1, 2, 3):
+            with self.subTest(schema=schema):
+                state = json.loads(json.dumps(current))
+                state["schema"] = schema
+                state["policy_version"] = schema
+                if schema < 3:
+                    state.pop("planner")
+                state["designer"] = None
                 state_path.write_text(json.dumps(state), encoding="utf-8")
 
                 status = self.run_script("--status", check=False)
@@ -855,6 +944,7 @@ class NativeRoutingTests(unittest.TestCase):
         )
         status = self.run_script("--status")
         self.assertIn("managed fields conflict", status.stdout)
+        self.assertIn("run --repair as a dry run", status.stdout)
         self.assertIn("Seats: suppressed", status.stdout)
         required = self.run_script(
             "--status", "--require-effective", check=False
@@ -875,6 +965,352 @@ class NativeRoutingTests(unittest.TestCase):
         self.assertIn("edited after setup", disabled.stderr)
         feature = self.read_fake_config()["features"]["multi_agent_v2"]
         self.assertEqual(feature["tool_namespace"], "collaboration")
+        self.assertTrue((self.home / NATIVE.STATE_FILENAME).exists())
+
+    def test_repair_restores_only_saved_managed_hints_and_keeps_state(self) -> None:
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--advisor-fable",
+            "--apply",
+        )
+        state_path = self.home / NATIVE.STATE_FILENAME
+        state_bytes = state_path.read_bytes()
+        state = json.loads(state_bytes)
+        config = self.read_fake_config()
+        feature = config["features"]["multi_agent_v2"]
+        feature["multi_agent_mode_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\nroute through execution_worker"
+        )
+        feature["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\nroute through verification_worker"
+        )
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+
+        status = self.run_script("--status")
+        self.assertIn("managed fields conflict", status.stdout)
+
+        preview = self.run_script("--repair")
+        self.assertIn("mode and usage", preview.stdout)
+        self.assertIn("Dry run only", preview.stdout)
+        self.assertEqual(self.read_fake_config(), config)
+        self.assertEqual(state_path.read_bytes(), state_bytes)
+
+        repaired = self.run_script("--repair", "--apply")
+        self.assertIn("Native routing policy repaired", repaired.stdout)
+        self.assertIn("fully quit and reopen Codex", repaired.stdout)
+        self.assertIn("does not change Claude Fable 5 authentication", repaired.stdout)
+        after = self.read_fake_config()
+        repaired_feature = after["features"]["multi_agent_v2"]
+        self.assertEqual(
+            repaired_feature["multi_agent_mode_hint_text"],
+            state["managed"]["mode"],
+        )
+        self.assertEqual(
+            repaired_feature["usage_hint_text"],
+            state["managed"]["usage"],
+        )
+        self.assertFalse(repaired_feature["hide_spawn_agent_metadata"])
+        self.assertEqual(repaired_feature["tool_namespace"], "agents")
+        self.assertEqual(after["unrelated"], {"keep": True})
+        self.assertEqual(state_path.read_bytes(), state_bytes)
+        healthy = self.run_script("--status", "--require-effective")
+        self.assertIn("installed and effective", healthy.stdout)
+
+    def test_repair_refuses_unmarked_or_unrelated_control_drift(self) -> None:
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--apply",
+        )
+        config = self.read_fake_config()
+        feature = config["features"]["multi_agent_v2"]
+        feature["multi_agent_mode_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent mode"
+        )
+        feature["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent usage"
+        )
+        feature["tool_namespace"] = "collaboration"
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        refused = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn("only managed mode/usage drift", refused.stderr)
+        self.assertEqual(self.read_fake_config(), config)
+
+        feature["tool_namespace"] = "agents"
+        feature["usage_hint_text"] = "USER AUTHORED USAGE"
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        refused = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn("managed ownership marker", refused.stderr)
+        self.assertEqual(self.read_fake_config(), config)
+
+    def test_repair_preserves_a_concurrent_user_edit(self) -> None:
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--apply",
+        )
+        config = self.read_fake_config()
+        feature = config["features"]["multi_agent_v2"]
+        feature["multi_agent_mode_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent mode"
+        )
+        feature["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent usage"
+        )
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        (self.home / ".fake-mutate-after-write").touch()
+        repaired = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(repaired.returncode, 2)
+        self.assertIn("newer edit was preserved", repaired.stderr)
+        self.assertEqual(
+            self.read_fake_config()["features"]["multi_agent_v2"]["usage_hint_text"],
+            "CONCURRENT USER EDIT",
+        )
+        self.assertTrue((self.home / NATIVE.STATE_FILENAME).exists())
+
+    def test_repair_requires_state_and_noops_when_already_matching(self) -> None:
+        missing = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(missing.returncode, 2)
+        self.assertIn("requires valid saved plugin state", missing.stderr)
+        self.assertFalse((self.home / ".fake-user-config.json").exists())
+
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--apply",
+        )
+        before_config = self.read_fake_config()
+        state_path = self.home / NATIVE.STATE_FILENAME
+        before_state = state_path.read_bytes()
+        no_op = self.run_script("--repair", "--apply")
+        self.assertIn("already matches", no_op.stdout)
+        self.assertEqual(self.read_fake_config(), before_config)
+        self.assertEqual(state_path.read_bytes(), before_state)
+
+    def test_repair_rolls_back_when_effective_policy_is_overridden(self) -> None:
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--apply",
+        )
+        config = self.read_fake_config()
+        feature = config["features"]["multi_agent_v2"]
+        feature["multi_agent_mode_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent mode"
+        )
+        feature["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent usage"
+        )
+        serialized = json.dumps(config)
+        (self.home / ".fake-user-config.json").write_text(
+            serialized, encoding="utf-8"
+        )
+        (self.home / ".fake-effective-config.json").write_text(
+            serialized, encoding="utf-8"
+        )
+        repaired = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(repaired.returncode, 2)
+        self.assertIn("did not become effective", repaired.stderr)
+        self.assertEqual(self.read_fake_config(), config)
+        self.assertTrue((self.home / NATIVE.STATE_FILENAME).exists())
+
+    def test_repair_refuses_fable_launcher_enablement_drift(self) -> None:
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--advisor-fable",
+            "--apply",
+        )
+        config = self.read_fake_config()
+        feature = config["features"]["multi_agent_v2"]
+        feature["multi_agent_mode_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent mode"
+        )
+        feature["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent usage"
+        )
+        config["plugins"][NATIVE.PLUGIN_ID]["mcp_servers"][
+            "fable-advisor-python3"
+        ]["enabled"] = False
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        refused = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn("Fable launcher setting changed", refused.stderr)
+        self.assertEqual(self.read_fake_config(), config)
+
+    def test_repair_refuses_integer_substitution_for_fable_boolean(self) -> None:
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--advisor-fable",
+            "--apply",
+        )
+        config = self.read_fake_config()
+        feature = config["features"]["multi_agent_v2"]
+        feature["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent usage"
+        )
+        config["plugins"][NATIVE.PLUGIN_ID]["mcp_servers"][
+            "fable-advisor-python3"
+        ]["enabled"] = 1
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        refused = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn("Fable launcher setting changed", refused.stderr)
+        self.assertEqual(self.read_fake_config(), config)
+
+    def test_repair_detects_a_concurrent_saved_state_edit(self) -> None:
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--apply",
+        )
+        config = self.read_fake_config()
+        feature = config["features"]["multi_agent_v2"]
+        feature["multi_agent_mode_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent mode"
+        )
+        feature["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent usage"
+        )
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        (self.home / ".fake-mutate-state-after-write").touch()
+        repaired = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(repaired.returncode, 2)
+        self.assertIn("state changed concurrently", repaired.stderr)
+        state = json.loads(
+            (self.home / NATIVE.STATE_FILENAME).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            state["previous"]["usage"]["value"], "CONCURRENT STATE EDIT"
+        )
+
+    def test_repair_handles_one_hint_in_a_scalar_conversion_only(self) -> None:
+        initial = {"features": {"multi_agent_v2": True}, "keep": "yes"}
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(initial), encoding="utf-8"
+        )
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--apply",
+        )
+        state_path = self.home / NATIVE.STATE_FILENAME
+        state_bytes = state_path.read_bytes()
+        config = self.read_fake_config()
+        feature = config["features"]["multi_agent_v2"]
+        feature["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent usage"
+        )
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        preview = self.run_script("--repair")
+        self.assertIn("saved managed usage hint only", preview.stdout)
+        self.run_script("--repair", "--apply")
+        self.assertEqual(state_path.read_bytes(), state_bytes)
+
+        config = self.read_fake_config()
+        feature = config["features"]["multi_agent_v2"]
+        feature["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent usage again"
+        )
+        feature["unrelated_new_field"] = True
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        refused = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn("table has other changes", refused.stderr)
+        self.assertEqual(self.read_fake_config(), config)
+
+    def test_repair_refuses_noop_scalar_table_drift(self) -> None:
+        initial = {"features": {"multi_agent_v2": True}, "keep": "yes"}
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(initial), encoding="utf-8"
+        )
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--apply",
+        )
+        config = self.read_fake_config()
+        config["features"]["multi_agent_v2"]["enabled"] = False
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        refused = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(refused.returncode, 2)
+        self.assertNotIn("already matches", refused.stdout)
+        self.assertIn("another owned control", refused.stderr)
+        self.assertEqual(self.read_fake_config(), config)
+
+    def test_repair_detects_concurrent_scalar_table_drift(self) -> None:
+        initial = {"features": {"multi_agent_v2": True}, "keep": "yes"}
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(initial), encoding="utf-8"
+        )
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--apply",
+        )
+        config = self.read_fake_config()
+        config["features"]["multi_agent_v2"]["usage_hint_text"] = (
+            f"{NATIVE.MANAGED_MARKER}\ndifferent usage"
+        )
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        (self.home / ".fake-mutate-feature-after-write").touch()
+        repaired = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(repaired.returncode, 2)
+        self.assertIn("newer edit was preserved", repaired.stderr)
+        self.assertEqual(
+            self.read_fake_config()["features"]["multi_agent_v2"][
+                "max_concurrent_threads_per_session"
+            ],
+            9,
+        )
         self.assertTrue((self.home / NATIVE.STATE_FILENAME).exists())
 
     def test_disable_without_state_removes_only_each_proven_hint(self) -> None:
@@ -1257,6 +1693,7 @@ class NativeRoutingTests(unittest.TestCase):
         usage = feature["usage_hint_text"]
         self.assertIn('agent_type = "codex_orchestration_executor"', usage)
         self.assertIn('agent_type = "codex_orchestration_advisor"', usage)
+        self.assertIn("No Designer route is configured", usage)
 
     def test_custom_planner_shadow_and_orphan_tracking(self) -> None:
         name = "codex_orchestration_planner_012345abcdef"

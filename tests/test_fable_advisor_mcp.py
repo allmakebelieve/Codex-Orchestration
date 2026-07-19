@@ -90,8 +90,10 @@ class FableAdvisorMcpTests(unittest.TestCase):
             "managed_feature": None,
             **seats,
         }
-        if schema == 3 and "planner" not in payload:
+        if schema >= 3 and "planner" not in payload:
             payload["planner"] = None
+        if schema >= 4 and "designer" not in payload:
+            payload["designer"] = None
         (self.home / FABLE.STATE_FILENAME).write_text(
             json.dumps(payload), encoding="utf-8"
         )
@@ -338,6 +340,11 @@ class FableAdvisorMcpTests(unittest.TestCase):
             FABLE.load_fable_route(self.home, seat="planner")
 
         self.write_state(schema=4, advisor=self.route())
+        self.assertEqual(FABLE.load_fable_route(self.home)["effort"], "high")
+        self.write_state(schema=4, advisor=self.route(), designer=self.route())
+        with self.assertRaisesRegex(FABLE.AdvisorError, "state is invalid"):
+            FABLE.load_fable_route(self.home)
+        self.write_state(schema=5, advisor=self.route())
         with self.assertRaisesRegex(FABLE.AdvisorError, "state is invalid"):
             FABLE.load_fable_route(self.home)
 
@@ -679,6 +686,10 @@ class FableAdvisorMcpTests(unittest.TestCase):
         )
         self.assertTrue(extra["result"]["isError"])
         self.assertIn("Unexpected tool argument", extra["result"]["content"][0]["text"])
+        error_payload = json.loads(extra["result"]["content"][0]["text"])
+        self.assertIn("fresh native status", error_payload["recovery"])
+        self.assertIn("fully quit and reopen Codex", error_payload["recovery"])
+        self.assertIn("do not re-authenticate solely", error_payload["recovery"])
 
     def test_saved_xhigh_and_legacy_max_efforts_remain_valid(self) -> None:
         for effort in ("xhigh", "max"):

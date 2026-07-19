@@ -43,6 +43,11 @@ SENSITIVE_ENV = {
     "CLAUDE_CODE_USE_VERTEX",
     "CLAUDE_CODE_USE_FOUNDRY",
 }
+STALE_BRIDGE_RECOVERY = (
+    "If Codex Orchestration changed after this task started, run fresh native status. "
+    "When status reports first-party login ready, fully quit and reopen Codex and "
+    "start a new task; do not re-authenticate solely for this loaded-bridge failure."
+)
 
 ADVISOR_SYSTEM_PROMPT = """You are Claude Fable 5 acting only as a plan advisor to Codex's root orchestrator.
 Review the supplied self-contained packet for material correctness, missing constraints, unsafe sequencing, ownership conflicts, and verification gaps. Do not edit files, call tools, spawn agents, contact the Planner or executors, or attempt implementation.
@@ -575,7 +580,14 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
             else:
                 raise AdvisorError(f"Unknown tool: {name!r}.")
         except AdvisorError as exc:
-            result = _tool_result({"available": False, "error": str(exc)}, is_error=True)
+            result = _tool_result(
+                {
+                    "available": False,
+                    "error": str(exc),
+                    "recovery": STALE_BRIDGE_RECOVERY,
+                },
+                is_error=True,
+            )
     else:
         return {
             "jsonrpc": "2.0",

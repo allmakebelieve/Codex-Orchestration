@@ -32,7 +32,9 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("setup executor: GPT-5.6 Luna Extra High", SKILL)
         self.assertIn("setup planner: Claude Fable 5 High", SKILL)
         self.assertIn("/codex-orchestration status", SKILL)
+        self.assertIn("/codex-orchestration repair", SKILL)
         self.assertIn("/codex-orchestration disable", SKILL)
+        self.assertIn("/codex-orchestration --update", SKILL)
         self.assertIn("current-task override", SKILL)
         self.assertIn("no longer needs to invoke this skill", SKILL)
 
@@ -62,9 +64,37 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("`planner:` configures only Planner", SKILL)
         self.assertIn("`advisor:` configures only Advisor", SKILL)
         self.assertIn("`executor:` configures only Executor", SKILL)
+        self.assertIn("`designer:` configures only Designer", SKILL)
+        self.assertIn("never reinterpret", SKILL)
         self.assertIn("Fable Planner uses `create_plan` and `revise_plan`", SKILL)
         self.assertIn("Fable Advisor uses `review_plan`", SKILL)
         self.assertIn("Advisor: none", SKILL)
+
+    def test_designer_is_optional_bounded_and_first_class(self) -> None:
+        self.assertIn("omitted designer means `designer: none`", SKILL)
+        self.assertIn("--designer-model", SKILL)
+        self.assertIn("--designer-effort", SKILL)
+        self.assertNotIn("--designer-agent", SKILL)
+        self.assertIn("Persistent Designer accepts only a direct same-provider model", SKILL)
+        self.assertIn("task-local External Model role named `designer`", SKILL)
+        self.assertIn("Designer may edit only explicitly delegated design artifacts", SKILL)
+        self.assertIn("never revises the canonical plan", SKILL)
+        self.assertIn("Designer may use the same model as another seat", SKILL)
+        self.assertIn("Designer: none", SKILL)
+        self.assertIn('"designer"', ROUTING_STATE)
+
+    def test_plugin_update_is_canonical_non_destructive_and_restart_bound(self) -> None:
+        self.assertIn("## Update the plugin", SKILL)
+        self.assertIn("canonical Git marketplace", SKILL)
+        self.assertIn("Never run `plugin remove`", SKILL)
+        self.assertIn("Do not\nwrap these commands in a custom downloader", SKILL)
+        self.assertIn("inspect/touch routing, chats, or sessions", SKILL)
+        self.assertIn("restart Codex", SKILL)
+        self.assertIn("Desktop and start a new task", SKILL)
+        self.assertIn("codex plugin list --json", SKILL)
+        self.assertIn("codex plugin marketplace upgrade", SKILL)
+        self.assertIn("codex plugin add", SKILL)
+        self.assertNotIn("codex plugin remove", SKILL)
 
     def test_codex_still_decides_when_to_delegate(self) -> None:
         self.assertIn("Codex decides whether a plan helps", SKILL)
@@ -94,6 +124,21 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn('"config/batchWrite"', NATIVE_SCRIPT)
         self.assertIn('"expectedVersion"', NATIVE_SCRIPT)
         self.assertIn('"reloadUserConfig"', NATIVE_SCRIPT)
+
+    def test_routing_repair_is_narrow_and_restart_aware(self) -> None:
+        self.assertIn("--repair --apply", SKILL)
+        self.assertIn("both live hints to retain the plugin\nownership marker", SKILL)
+        self.assertIn("Fable launcher", SKILL)
+        self.assertIn("leaves the original\nrestore snapshot", SKILL)
+        self.assertIn("preserves\na concurrent config or saved-state edit", SKILL)
+        self.assertIn("fully quit and reopen Codex", SKILL)
+        self.assertIn("Do not\nrequest re-authentication", SKILL)
+        self.assertIn("def _repair(", NATIVE_SCRIPT)
+        self.assertIn("reload_user_config=True", NATIVE_SCRIPT)
+        self.assertIn("newer edit was preserved", NATIVE_SCRIPT)
+        self.assertIn("pre-repair", NATIVE_SCRIPT)
+        self.assertIn("managed hints were restored", NATIVE_SCRIPT)
+        self.assertIn("never reads or changes credentials", REFERENCE)
 
     def test_every_different_route_uses_a_non_history_fork(self) -> None:
         self.assertIn('fork_turns = "none"', SKILL)

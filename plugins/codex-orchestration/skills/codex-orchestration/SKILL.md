@@ -1,6 +1,6 @@
 ---
 name: codex-orchestration
-description: Build multi-model Codex workflows by assigning compatible models to roles such as planner, advisor, executor, researcher, reviewer, writer, or supervisor. Use when the user invokes Codex Orchestration to create custom roles, define a workflow, or set up, inspect, change, disable, or temporarily override model routing. Keep the selected task model as root and preserve Codex's Goal, permissions, integration, and verification behavior.
+description: Build multi-model Codex workflows by assigning compatible models to roles such as planner, advisor, designer, executor, researcher, reviewer, writer, or supervisor. Use when the user invokes Codex Orchestration to update the plugin, create custom roles, define a workflow, or set up, inspect, repair, change, disable, or temporarily override model routing. Keep the selected task model as root and preserve Codex's Goal, permissions, integration, and verification behavior.
 ---
 
 # Codex Orchestration
@@ -17,47 +17,91 @@ Support these simple forms:
 /codex-orchestration setup executor: GPT-5.6 Luna Extra High
 /codex-orchestration setup executor: GPT-5.6 Luna Extra High, advisor: Claude Fable 5 High
 /codex-orchestration setup planner: Claude Fable 5 High, advisor: GPT-5.6 Sol High, executor: GPT-5.6 Luna Extra High
+/codex-orchestration setup designer: GPT-5.6 Sol High, executor: GPT-5.6 Luna Extra High
+/codex-orchestration --update
 /codex-orchestration create project role: researcher
 /codex-orchestration create personal roles: researcher, writer, reviewer
 /codex-orchestration configure external role researcher with OpenRouter model moonshotai/kimi-k3 at max
 /codex-orchestration call researcher at max — <one bounded task>
 /codex-orchestration status
+/codex-orchestration repair
 /codex-orchestration disable
 /codex-orchestration remove custom roles personally
 /codex-orchestration executor: GPT-5.6 Terra high — <one task only>
 ```
 
-`setup` installs or updates the personal one-time routing policy. `create project role` or `create personal role` creates native Codex custom-agent files. `status` inspects built-in routing. `disable` restores its pre-setup values.
+`--update` securely refreshes this plugin from its canonical Git marketplace. `setup` installs or updates the personal one-time routing policy. `create project role` or `create personal role` creates native Codex custom-agent files. `status` inspects built-in routing. `repair` restores only saved managed hint bytes after narrow drift validation. `disable` restores pre-setup values.
 
 `remove custom roles` cleans only verified plugin-managed advisor/executor files. Arbitrary native roles are user-owned. An invocation with seats and work but no control verb is a current-task override and must not rewrite config.
 
-Explicit seat labels are authoritative. `planner:` configures only Planner, `advisor:` configures only Advisor, and `executor:` configures only Executor. Never infer or change a seat from a model's historical use, default role, cached description, or provider; in particular, never reinterpret a supplied `planner:` model as an Advisor. Saved defaults may fill only omitted seats and never override a seat supplied in the current invocation.
+Explicit seat labels are authoritative. `planner:` configures only Planner, `advisor:` configures only Advisor, `designer:` configures only Designer, and `executor:` configures only Executor. Never infer or change a seat from a model's historical use, default role, cached description, or provider; in particular, never reinterpret a supplied `planner:` model as an Advisor or a supplied `designer:` model as an Executor. Saved defaults may fill only omitted seats and never override a seat supplied in the current invocation.
 
-The executor is required for setup or a task-local override. It is not required for a custom-role creation request. Planner and advisor are optional: omitted planner means the current root model plans, while omitted advisor means `advisor: none`. Do not ask separate planner or advisor questions unless the user asks for help choosing them.
+The executor is required for setup or a task-local override. It is not required for a custom-role creation request. Planner, advisor, and designer are optional: omitted planner means the current root model plans, omitted advisor means `advisor: none`, and omitted designer means `designer: none`. Do not ask separate planner or advisor questions, or a separate designer question, unless the user asks for help choosing them.
 
 For both persistent setup and task-local overrides, reject an identical Planner and Advisor route: the same direct model ID, the same custom-agent name, or Claude Fable 5 in both seats. Independent critique is required.
 
 If the executor is missing, ask only:
 
 ```text
-Which executor model and effort should Codex use? You can optionally include a planner and advisor; omission uses the root as planner and no advisor.
+Which executor model and effort should Codex use? You can optionally include a planner, advisor, and designer; omission uses the root as planner and no advisor or designer.
 ```
 
 Because explicit skills may not reload from a bare reply, include a ready-to-copy line using the exact label shown by the client and preserve the original work:
 
 ```text
-<exact-skill-label> setup executor=<model>@<effort-or-auto>, planner=<model>@<effort-or-auto>|root, advisor=<model>@<effort-or-auto>|none
+<exact-skill-label> setup executor=<model>@<effort-or-auto>, planner=<model>@<effort-or-auto>|root, advisor=<model>@<effort-or-auto>|none, designer=<model>@<effort-or-auto>|none
 ```
 
 For a task-local request, append `— <original task>`. Keep every supplied modifier. Do not lose the user's task while collecting a model choice.
 
-Before applying setup or starting task-local work, report the normalized mapping as `Planner`, `Advisor`, and `Executor` in that order. Compare it with the user's explicit labels. If an exact seat cannot run, report that seat as unavailable and stop under the required-route rules; never move its model to another seat. When the user supplies Planner and Executor but omits Advisor, report `Advisor: none`.
+Before applying setup or starting task-local work, report the normalized mapping as `Planner`, `Advisor`, `Designer`, and `Executor` in that order. Compare it with the user's explicit labels. If an exact seat cannot run, report that seat as unavailable and stop under the required-route rules; never move its model to another seat. When the user omits Designer, report `Designer: none`; when the user supplies Planner and Executor but omits Advisor, report `Advisor: none`.
 
 If an old prompt contains `orchestrator:`, explain that the current task model already owns that role. Ignore that seat instead of switching or persisting it.
 
 Normalize `Extra High` to `xhigh`. For Claude Fable 5, accept `Low`, `Medium`, `High`, `XHigh`, `Max`, or `Ultra`. Omission or `Auto` means `High`; `Ultra` is a user-facing alias for Claude Code's actual `max` setting and must be reported as that mapping. Route Fable with `--planner-fable --planner-effort <normalized-effort>` or `--advisor-fable --advisor-effort <normalized-effort>`, not through the Codex model catalog. Resolve every other display name to an exact ID only through the executing host's model catalog, picker, a loaded custom agent, or official provider documentation. Never invent an ID. For persistent direct routing, resolve `auto` to the catalog's concrete default.
 
+Persistent Designer accepts only a direct same-provider model, not a Fable MCP
+or unqualified custom-agent route. Route it with `--designer-model` plus
+`--designer-effort`. A Designer route may share a model with another seat; only
+Planner and Advisor require independent routes. For a cross-provider Designer,
+create and invoke a task-local External Model role named `designer`; `resolve` must
+reject matching project agents in the current workspace or any ancestor immediately
+before returning its route. Codex does not yet expose a scope-qualified agent identity,
+so persisting an agent name would let a later project's agent shadow it.
+
 Read [providers-and-models.md](references/providers-and-models.md) before setup, when clients disagree, when a model is absent, when providers differ, or when custom agents or legacy migration are involved.
+
+## Update the plugin
+
+Treat `/codex-orchestration --update` as an explicit request to update only this
+plugin. It cannot be combined with setup, status, disable, seat settings, custom
+role operations, or task work. Resolve the absolute Codex binary used by the active
+host. First run `codex plugin list --json` and require exactly one enabled
+`codex-orchestration@codex-orchestration` entry whose marketplace source type is
+`git` and source is the canonical HTTPS GitHub repository. Refuse local, disabled,
+missing, duplicate, or unexpected sources without mutation. Then run only:
+
+```bash
+codex plugin marketplace upgrade codex-orchestration --json
+codex plugin add codex-orchestration@codex-orchestration --json
+codex plugin list --json
+```
+
+Use that active absolute binary for all commands and let Codex's native plugin
+manager own transport, process containment, cache writes, and installation. Do not
+wrap these commands in a custom downloader, Git client, script, or credential-bearing
+environment. Require the upgrade result to select only this marketplace with no
+errors, the add result to report a SemVer newer than or equal to the original, and
+the final inventory to retain the exact canonical source and enabled state at that
+version. Never run `plugin remove`, rewrite Codex config, read credentials, or
+inspect/touch routing, chats, or sessions. If a native command or post-check fails,
+report the exact phase as failed and do not claim rollback.
+
+On success, report the old and new versions and tell the user to restart Codex
+Desktop and start a new task. The current task keeps the already loaded skill
+instructions; no updater can replace those in place. If the plugin is installed
+from a local or noncanonical marketplace, stop and explain that automatic update
+is intentionally unavailable for that source.
 
 ## External Model roles
 
@@ -76,6 +120,7 @@ Accept natural-language forms such as:
 
 ```text
 configure external role researcher with <provider> model <exact-id> at <effort>; job: <purpose>
+configure external role designer with <provider> model <exact-id> at <effort>; job: <design purpose>
 call researcher at max — <bounded task>
 use reviewer@high for <bounded task>
 external status
@@ -141,7 +186,7 @@ adapter to arbitrary CLIs.
 
 ## Create arbitrary custom roles
 
-Use native Codex custom-agent files for roles beyond the built-in planner, advisor, and executor seats. Examples include researcher, reviewer, writer, supervisor, security auditor, browser debugger, or domain expert.
+Use native Codex custom-agent files for roles beyond the built-in planner, advisor, designer, and executor seats. Examples include researcher, reviewer, writer, supervisor, security auditor, browser debugger, or domain expert.
 
 Use project scope when the user says `project`, `repo`, `workspace`, or `current project`. Write to `<trusted-project>/.codex/agents/<role-name>.toml`. Use personal scope only when explicitly requested and write to `~/.codex/agents/<role-name>.toml`.
 
@@ -170,7 +215,7 @@ If the user combines a workflow with a Codex Goal, leave Goal lifecycle and limi
 Use this path for a current same-provider setup such as Sol root to Luna or Terra children. Claude Fable 5 is the one built-in cross-provider Planner or Advisor exception because it runs through the bundled read-only MCP bridge and the user's authenticated Claude Code CLI.
 
 1. Identify the Codex binary used by the active host. Do not assume the shell `codex` is the Desktop binary.
-2. Resolve the exact executor and optional Planner and Advisor IDs and efforts from that host.
+2. Resolve the exact executor and optional Planner, Advisor, and Designer IDs and efforts from that host.
 3. Run the bundled native configurator from this skill's real directory with Python 3.11 or newer. Use `python3` on typical macOS/Linux hosts; on Windows select an available `py -3.11` or `python` launcher after checking its version. Never use a repository-relative copy from the user's workspace.
 4. Inspect the dry-run output. A literal `setup` request authorizes applying a clean, non-replacement personal policy after that preview.
 5. Start a new task after apply. The user chooses the orchestrator in the normal model picker and no longer needs to invoke this skill for ordinary work.
@@ -194,9 +239,15 @@ Add `--advisor-model` and `--advisor-effort` for a same-provider Codex advisor. 
 
 Add `--planner-model` and `--planner-effort` for a same-provider Planner. For Claude Fable 5, use `--planner-fable`; add `--planner-effort low|medium|high|xhigh|max` when the user chooses one. Planner omission persists no Planner route and means the root plans. A configured Planner and Advisor must not resolve to the same model or agent route; independent review is required.
 
+Add `--designer-model` and `--designer-effort` for a persistent same-provider
+Designer. Designer omission persists `designer: none`. Designer cannot use the
+Fable MCP route or a persistent custom-agent name. Use a task-local External Model
+role named `designer` for cross-provider design work so the root can validate its
+personal file and reject project shadowing immediately before the bounded call.
+
 The configurator capability-tests the complete four-field preset on the active target, `codex` on PATH when different, the known macOS Desktop binary when present, and every explicit `--compat-bin`. A successful isolated config probe means that client can parse the preset; it is not a live child-model confirmation. Report `route accepted` or `used and confirmed` only from the exact live spawn evidence defined below. Ask about other Codex/IDE installations that share this config only when the environment suggests they exist, and pass their binaries explicitly. If the request or active host indicates a named `--profile`, explain that normal setup manages the default user layer and is not verified for that profile; do not add a routine question for users with no profile signal. If a checked client rejects any managed field, stop before apply. Recommend updating it or using the task-local fallback. `--allow-incompatible-client` requires a separate explicit user decision because it can make the shared config unreadable to that client.
 
-For the current validated v2 direct route, set `tool_namespace = "agents"`. Live testing on Desktop `0.144.0-alpha.4` showed that the default reserved `collaboration.spawn_agent` schema rejected expanded model/effort metadata, while `agents` accepted the same request and spawned Luna at `xhigh`. Treat this as a required control-surface setting for that tested path, not as the executor selection. `usage_hint_text` carries the actual Planner, Advisor, and Executor routes.
+For the current validated v2 direct route, set `tool_namespace = "agents"`. Live testing on Desktop `0.144.0-alpha.4` showed that the default reserved `collaboration.spawn_agent` schema rejected expanded model/effort metadata, while `agents` accepted the same request and spawned Luna at `xhigh`. Treat this as a required control-surface setting for that tested path, not as the executor selection. `usage_hint_text` carries the actual Planner, Advisor, Designer, and Executor routes.
 
 Do not add `enabled = true` for a Sol or Terra root. Their current model metadata selects v2. The configurator intentionally manages these routing fields:
 
@@ -211,7 +262,7 @@ It uses Codex App Server's `config/read` and `config/batchWrite` APIs, not a hom
 
 If a user-authored mode or usage hint already exists, do not replace it automatically. Show the conflict. Use `--replace-existing-policy` only after the user explicitly approves replacing and later restoring those exact values.
 
-## Status, change, and disable
+## Status, repair, change, and disable
 
 For status:
 
@@ -225,7 +276,33 @@ python3 <skill-dir>/scripts/configure_native_routing.py \
   --status --require-effective
 ```
 
-Run status from the target project. The first form is descriptive. Use `--require-effective` for automation and release gates; it returns nonzero for incompatible clients, conflicts, overrides, incomplete controls, an unavailable Fable or custom-agent route, or orphaned v0.4+ personal roles. Report the current task model as the orchestrator, Planner (`root` when omitted), configured Advisor and Executor, whether the personal policy is installed and effective in that workspace, whether effective spawn controls are visible, whether the effective tool namespace is `agents`, the target config path, and checked-client compatibility. State that neither status form proves a live route or infers v2 activation for the model selected in a task; current Sol or Terra is the intended root.
+Run status from the target project. The first form is descriptive. Use `--require-effective` for automation and release gates; it returns nonzero for incompatible clients, conflicts, overrides, incomplete controls, an unavailable Fable or custom-agent route, or orphaned v0.4+ personal roles. Report the current task model as the orchestrator, Planner (`root` when omitted), configured Advisor, Designer, and Executor, whether the personal policy is installed and effective in that workspace, whether effective spawn controls are visible, whether the effective tool namespace is `agents`, the target config path, and checked-client compatibility. State that neither status form proves a live route or infers v2 activation for the model selected in a task; current Sol or Terra is the intended root.
+
+When status reports `managed fields conflict with local restore state`, do not run
+setup or disable over the conflict and do not assume authentication failed. A literal
+`repair` request makes the valid saved plugin state authoritative only for the
+following narrow recovery. Dry-run first, then apply only after the preview says the
+drift is limited to saved managed mode/usage hints:
+
+```bash
+python3 <skill-dir>/scripts/configure_native_routing.py \
+  --codex-bin <active-codex-binary> \
+  --repair
+
+python3 <skill-dir>/scripts/configure_native_routing.py \
+  --codex-bin <active-codex-binary> \
+  --repair --apply
+```
+
+Repair must require valid saved state and both live hints to retain the plugin
+ownership marker. It must refuse namespace, spawn-metadata, Fable launcher,
+scalar-shape, missing/unmarked hint, or other managed drift. It writes only the
+different mode/usage fields through App Server compare-and-swap, leaves the original
+restore snapshot and seat records byte-for-byte unchanged, checks user and effective
+readback, rolls the two fields back when a higher layer overrides them, and preserves
+a concurrent config or saved-state edit instead of overwriting it. It never reads or
+changes authentication, credentials, chats, or sessions. After apply, run status with
+`--require-effective` and fully quit and reopen Codex before starting a new task.
 
 To change seats, run normal `setup` again. The configurator keeps the original restore snapshot rather than treating its own managed values as user settings.
 
@@ -261,7 +338,15 @@ The plugin packages three disabled MCP launcher variants for macOS, Linux, and W
 
 Fable effort is configurable per setup. The default is `high`; supported Claude Code values are `low`, `medium`, `high`, `xhigh`, and `max`. Accept `ultra` as an alias for `max`, save the effective Claude Code value, and disclose the alias mapping in setup output. Existing saved `max` routes remain valid.
 
-The bridge exposes only bounded, read-only planning operations. `create_plan` accepts one self-contained packet and requires `PLAN_DRAFT`. `revise_plan` requires the task, canonical current plan, latest critique, and compact findings history, then requires `PLAN_REVISION` plus a findings ledger and revised plan. `review_plan` remains the Advisor operation and requires `PLAN_APPROVED` or `PLAN_REVISE`. Every call uses the same full saved-state validator as native status/disable, then requires runtime `modelUsage` to contain the pinned `claude-fable-5` primary plus only the bridge's explicit exact helper allowlist. Return every observed ID in `used_models`; an unknown additional or missing primary model makes the seat unavailable. Any auth, transport, state, format, or model-confirmation failure makes that seat unavailable; it never counts as approval. The bridge returns no account identifier or credential.
+The bridge exposes only bounded, read-only planning operations. `create_plan` accepts one self-contained packet and requires `PLAN_DRAFT`. `revise_plan` requires the task, canonical current plan, latest critique, and compact findings history, then requires `PLAN_REVISION` plus a findings ledger and revised plan. `review_plan` remains the Advisor operation and requires `PLAN_APPROVED` or `PLAN_REVISE`. Every call uses the same full saved-state validator as native status/repair/disable, then requires runtime `modelUsage` to contain the pinned `claude-fable-5` primary plus only the bridge's explicit exact helper allowlist. Return every observed ID in `used_models`; an unknown additional or missing primary model makes the seat unavailable. Any auth, transport, state, format, or model-confirmation failure makes that seat unavailable; it never counts as approval. The bridge returns no account identifier or credential.
+
+Plugin and policy updates cannot replace the MCP process already loaded into the
+current task. If a Fable call fails after an update or repair, run fresh native
+status. When status reports Claude Fable 5 `ready — first-party login`, classify the
+current tool failure as a stale loaded bridge, not an authentication failure. Do not
+request re-authentication. Fully quit and reopen Codex, then start a new task so the
+installed bridge, policy, and saved state load together. Ask for login only when the
+fresh status check itself reports authentication unavailable.
 
 The managed workflow reserves these MCP calls for the root Codex model. Current MCP requests do not carry caller identity, so the bridge cannot independently authenticate root versus child; caller isolation is instruction-enforced. The bridge still mechanically prevents tools, edits, permission prompts, and session persistence. Never describe the caller boundary as engine-enforced.
 
@@ -269,7 +354,7 @@ The managed workflow reserves these MCP calls for the root Codex model. Current 
 
 Direct `model` routing is same-provider. The audited External Model path above may prepare one bundled provider safely. Every unbundled provider still needs an already authenticated Codex-compatible provider and a loaded custom agent that pins `model_provider`.
 
-For a cross-provider Planner, create a bounded personal custom role through the arbitrary-role flow, start a new task so it loads, and pass its exact name with `--planner-agent`. The older standalone managed-role helper below continues to own only its existing Advisor and Executor files; do not expand its migration/removal transaction just to create a Planner.
+For a cross-provider Planner, create a bounded personal custom role through the arbitrary-role or audited External Model flow, start a new task so it loads, and pass its exact name with `--planner-agent`. For a cross-provider Designer, create a task-local External Model role named `designer` and invoke it only after current-project validation; do not persist its unqualified agent name. The older standalone managed-role helper below continues to own only its existing Advisor and Executor files.
 
 Use the existing standalone-agent configurator for an unbundled provider path. Personal scope is required for machine-local provider IDs and affects all projects, so the user's explicit cross-provider `setup` request must name or confirm the existing provider ID. Never create an unreviewed provider definition, collect keys in chat, or write credentials.
 
@@ -328,6 +413,7 @@ This skill and its saved policy must never:
 - weaken approvals or permissions;
 - create nested executor teams;
 - let a Planner or Advisor contact the other role directly;
+- let Designer contact Planner, Advisor, or Executor directly;
 - let an advisor direct executors;
 - parallelize overlapping writes;
 - silently substitute the root model for an unavailable child route.
@@ -346,7 +432,7 @@ fork_turns = "none"
 
 A small positive partial fork is technically valid in Codex, but this skill deliberately requires `none`: it minimizes duplicated context and makes the root send a deliberate self-contained packet. Never use the default `all` with a different route. Full-history forks inherit the root model and Codex rejects the override.
 
-For a direct Planner, Advisor, or Executor route, pass the exact configured model and concrete effort. For a custom route, pass the exact namespaced `agent_type`. Do not force a service tier; supported children may inherit Fast/priority from the parent, so tell users who prioritize allowance savings not to run the root in Fast mode.
+For a direct Planner, Advisor, Designer, or Executor route, pass the exact configured model and concrete effort. For a custom route, pass the exact namespaced `agent_type`. Do not force a service tier; supported children may inherit Fast/priority from the parent, so tell users who prioritize allowance savings not to run the root in Fast mode.
 
 Direct model overrides keep the root's provider. Before a direct spawn, establish that the target model is on the same provider. If it differs or cannot be established, mark the route unavailable and require a custom agent that pins `model_provider`.
 
@@ -359,9 +445,9 @@ After spawning, use the tool result or client metadata to confirm the accepted r
 - `inherited root — requested child model was not used`;
 - `unavailable`: the requested route cannot run here;
 - `root`: no Planner route is configured, so the root plans;
-- `none`: no Advisor is configured.
+- `none`: no Advisor or Designer is configured for that seat.
 
-Tool acceptance proves the requested route was valid and accepted, not necessarily that the client exposes post-start runtime identity. Child prose claiming a model name is not proof. If an exact route fails, report it to the root. An unavailable configured Planner or Advisor halts before Executor work unless the user explicitly made that seat best-effort for the current task; apply the bounded degradation rules below and disclose it. An unavailable Executor may leave work with the root only when the user did not require delegation or that Executor route. Never describe an unavailable route as successful.
+Tool acceptance proves the requested route was valid and accepted, not necessarily that the client exposes post-start runtime identity. Child prose claiming a model name is not proof. If an exact route fails, report it to the root. An unavailable configured Planner or Advisor halts before Executor work unless the user explicitly made that seat best-effort for the current task; apply the bounded degradation rules below and disclose it. A configured Designer failure blocks work that explicitly requires its design handoff, but does not block unrelated Executor work; the root owns design when Designer was omitted. An unavailable Executor may leave work with the root only when the user did not require delegation or that Executor route. Never describe an unavailable route as successful.
 
 ## Planner and Advisor workflow
 
@@ -391,6 +477,26 @@ Do not persist a best-effort flag. An explicit task override applies only to tha
 Reject persistent setup or task-local activation when configured Planner and Advisor routes are identical: the same direct model ID, same custom-agent name, or Fable in both seats. Independent critique is the reason for the Advisor role.
 
 Fable Planner uses `create_plan` and `revise_plan`; Fable Advisor uses `review_plan`. These operations are seat-bound: never send a supplied Fable Planner to `review_plan`, and never use an Advisor route to create or revise the plan. The policy authorizes only the root to make these read-only calls; Executors must never use or direct them.
+
+## Designer handoff
+
+Designer is optional and root-directed. Use it after any required plan approval
+when visual design, UX, interaction flow, information architecture, or a design
+system would materially improve the result. Give it one bounded packet containing:
+
+- approved requirements and the exact design question;
+- target users, platform, constraints, and acceptance criteria;
+- required deliverables and handoff format;
+- explicit ownership of any design artifacts it may edit;
+- implementation boundaries and known dependencies.
+
+Designer may edit only explicitly delegated design artifacts. Otherwise it returns
+a design specification or handoff. It never revises the canonical plan, changes
+implementation code, releases Executor, contacts Planner, Advisor, or Executor, or
+spawns descendants. The root validates the design handoff, resolves conflicts with
+the approved plan, and decides what implementation packet Executor receives. A
+Designer may use the same model as another seat because independent critique is not
+its purpose; the Planner/Advisor route-separation rule remains unchanged.
 
 ## Executor handoff
 
@@ -426,8 +532,9 @@ Report a compact activation status and continue the included task:
 Codex Orchestration
 Orchestrator: <active model or current task model> — active
 Planner: <model>@<effort> — <route state>, or root
-Executor: <model>@<effort> — <route state>
 Advisor: <model>@<effort> — <route state>, or none
+Designer: <model>@<effort> — <route state>, or none
+Executor: <model>@<effort> — <route state>
 Delegation: Codex decides when it helps; Plan and Goal behavior unchanged
 ```
 
@@ -443,7 +550,7 @@ Never call that 65% fewer raw tokens, a guaranteed five-hour or weekly-limit sav
 
 ## Resources
 
-- `scripts/configure_native_routing.py`: one-time native setup, status, update, and disable.
+- `scripts/configure_native_routing.py`: one-time native setup, status, seat changes, and disable.
 - `scripts/fable_advisor_mcp.py`: fail-closed Claude Fable 5 planning and review bridge.
 - `scripts/configure_orchestration.py`: namespaced custom agents, provider pins, safe removal, and legacy migration.
 - `scripts/inspect_models.py`: fallible host-catalog diagnostics.

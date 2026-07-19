@@ -4,10 +4,11 @@ Bring models like Claude Fable 5 into Codex, give each model a role, and let Cod
 
 ## What is it?
 
-Codex Orchestration adds three simple roles to a Codex task:
+Codex Orchestration adds four simple roles to a Codex task:
 
 - **Planner** creates the plan and improves it after feedback. It is optional; when omitted, your current Codex model plans.
 - **Advisor** reviews the plan, finds important gaps, and approves it when it is ready. It is optional.
+- **Designer** turns approved requirements into a bounded visual, UX, interaction, information-architecture, or design-system handoff. It is optional.
 - **Executor** implements the approved plan. It is required for setup.
 
 The model selected for the Codex task remains in charge. It passes work between the roles, checks every result, and gives you the final answer.
@@ -38,6 +39,10 @@ The model selected for the Codex task remains in charge. It passes work between 
                        PLAN APPROVED
                              |
                              v
+                DESIGNER SHAPES THE EXPERIENCE
+                    optional design handoff
+                             |
+                             v
                   EXECUTORS IMPLEMENT IT
                              |
                              v
@@ -49,7 +54,7 @@ Planner and Advisor can work through several revisions. Codex stops as soon as t
 ## Why use it?
 
 - Bring Fable 5 or another compatible model into Codex.
-- Use different models for planning, review, and implementation.
+- Use different models for planning, review, design, and implementation.
 - Get a stronger plan before code changes begin.
 - Run independent implementation work in parallel—up to 2x faster on suitable tasks.
 - Move repeatable work away from the root model and potentially hit premium-model limits about 40% less often.
@@ -73,6 +78,12 @@ Use Fable 5 to plan, Sol to advise, and Luna to implement:
 /codex-orchestration setup planner: Claude Fable 5 High, advisor: GPT-5.6 Sol High, executor: GPT-5.6 Luna Extra High
 ```
 
+Add a dedicated Designer when the work needs a design handoff:
+
+```text
+/codex-orchestration setup planner: Claude Fable 5 High, advisor: GPT-5.6 Sol High, designer: GPT-5.6 Terra High, executor: GPT-5.6 Luna Extra High
+```
+
 Or let your current Codex model plan and use Fable 5 only as Advisor:
 
 ```text
@@ -88,15 +99,16 @@ Fable 5 uses the official Claude Code CLI and a compatible first-party Claude lo
 ## Choose your roles
 
 ```text
-/codex-orchestration setup planner: <model and effort>, advisor: <model and effort>, executor: <model and effort>
+/codex-orchestration setup planner: <model and effort>, advisor: <model and effort>, designer: <model and effort>, executor: <model and effort>
 ```
 
 - Omit `planner` to use the current Codex model as Planner.
 - Omit `advisor` when you do not want plan review.
+- Omit `designer` when you do not need a separate design handoff.
 - `executor` is required.
 - Planner and Advisor must use different configured model routes so the review is independent.
 
-Role labels are literal. A model after `planner:` plans; a model after `advisor:` reviews; a model after `executor:` implements. Codex must never move a model to a different role because that model was used differently in an older plugin version. If you specify Planner and Executor but omit Advisor, the workflow has no Advisor.
+Role labels are literal. A model after `planner:` plans; a model after `advisor:` reviews; a model after `designer:` designs; a model after `executor:` implements. Codex must never move a model to a different role because that model was used differently in an older plugin version. If you omit Designer, the workflow has no Designer. If you specify Planner and Executor but omit Advisor, the workflow has no Advisor.
 
 Examples:
 
@@ -104,6 +116,8 @@ Examples:
 /codex-orchestration setup planner: Claude Fable 5 High, advisor: GPT-5.6 Sol High, executor: GPT-5.6 Luna Extra High
 
 /codex-orchestration setup planner: GPT-5.6 Sol Extra High, advisor: Claude Fable 5 High, executor: GPT-5.6 Luna Extra High
+
+/codex-orchestration setup designer: GPT-5.6 Terra High, executor: GPT-5.6 Luna Extra High
 
 /codex-orchestration setup executor: GPT-5.6 Luna Extra High
 ```
@@ -120,6 +134,8 @@ Ask for a role in plain language:
 
 ```text
 /codex-orchestration configure external role researcher with OpenRouter model moonshotai/kimi-k3 at max; job: gather evidence and cite sources
+
+/codex-orchestration configure external role designer with OpenRouter model moonshotai/kimi-k3 at max; job: produce a bounded UX specification
 
 /codex-orchestration call researcher at max — review this bounded research packet
 ```
@@ -163,16 +179,26 @@ Create a Codex Goal normally, then tell Codex to use the saved workflow until th
 ```text
 /codex-orchestration status
 /codex-orchestration status --require-effective
-/codex-orchestration setup planner: Claude Fable 5 High, advisor: GPT-5.6 Sol High, executor: GPT-5.6 Luna Extra High
+/codex-orchestration repair
+/codex-orchestration --update
+/codex-orchestration setup planner: Claude Fable 5 High, advisor: GPT-5.6 Sol High, designer: GPT-5.6 Terra High, executor: GPT-5.6 Luna Extra High
 /codex-orchestration disable
 ```
 
 `disable` restores the routing values that existed before setup. It does not delete user-owned custom roles.
 
+`repair` is narrower than setup or disable. When status reports that plugin-managed
+mode/usage hints conflict with otherwise intact saved state, it can restore only
+those saved hint bytes after a dry run. It refuses missing state, unmarked text,
+namespace or spawn-metadata drift, Fable launcher drift, concurrent edits, and
+higher-layer overrides. It does not rewrite restore history or touch authentication,
+credentials, chats, or sessions.
+
 ## Important limits
 
 - Codex remains the root orchestrator and final authority.
-- Planner and Advisor report only to Codex; they do not contact each other or Executors directly.
+- Planner, Advisor, and Designer report only to Codex; they do not contact one another or Executors directly.
+- Designer may edit only design artifacts explicitly delegated by Codex; it does not change implementation code or release Executor.
 - The workflow reserves Fable planning tools for the root Codex model by policy. Current MCP calls do not identify their caller, so this caller boundary is instruction-enforced; the bridge itself still disables tools, edits, and session persistence.
 - Advisor approval is a planning gate, not a guarantee that implementation will succeed.
 - Direct model routes inherit the root provider. Audited external adapters use
@@ -186,16 +212,38 @@ Technical details are in [providers and models](plugins/codex-orchestration/skil
 
 ## Update
 
+For version 0.7.0 and newer, ask the installed plugin to update itself:
+
+```text
+/codex-orchestration --update
+```
+
+The command refuses disabled, local, missing, duplicate, or unexpected sources,
+then delegates refresh and installation only to Codex's native plugin manager and
+verifies the final canonical source, version, and enabled state. It does not remove
+the plugin or touch routing, credentials, chats, sessions, or the model picker.
+Restart Codex Desktop and start a new task after an update; the task that launched
+the updater keeps its already loaded instructions.
+
+If a Fable call fails in the task that performed an update but fresh status reports
+`first-party login ready`, the login is healthy and the already loaded MCP bridge is
+stale. Fully quit and reopen Codex, then start a new task; do not re-authenticate
+solely for that stale-bridge condition.
+
+To move from version 0.6.x or older to 0.7.0, run the native Codex commands once:
+
 ```bash
 codex plugin marketplace upgrade codex-orchestration
 codex plugin add codex-orchestration@codex-orchestration
 ```
 
-Version **0.6.0 or newer** is required for External Model roles. It has a distinct release identity so Codex installs the new security and routing contracts instead of reusing an older cache. After the two update commands, confirm `codex plugin list --json` reports `0.6.0` or newer, then start a new task; a task that already loaded the old skill cannot refresh its instructions in place.
+Version **0.6.0 or newer** is required for External Model roles; version **0.7.0
+or newer** adds `--update`, routing repair, and Designer. Confirm with
+`codex plugin list --json`, then restart Codex Desktop and start a new task.
 
 If the version stays old or `marketplaceSource.sourceType` is `local`, Codex is pointed at a local checkout rather than the GitHub marketplace. Run `/codex-orchestration disable` first if a saved policy is active, then remove the plugin and that marketplace registration, add `Cjbuilds/Codex-Orchestration` again, and reinstall. This does not delete the local source checkout.
 
-Before downgrading to a version older than Planner support, run `/codex-orchestration disable` with the current version first.
+Before downgrading to a version older than the currently saved routing schema, run `/codex-orchestration disable` with the current version first.
 
 ## Uninstall
 

@@ -23,6 +23,16 @@ non-secret state under `CODEX_HOME`. External setup never writes top-level `mode
 or `model_provider`, never edits OpenAI authentication, and never reads, migrates,
 or deletes chat/session storage.
 
+The explicit update control first requires exactly one enabled installed plugin with
+the canonical HTTPS Git marketplace identity. It then delegates refresh, transport,
+process containment, cache mutation, and installation exclusively to Codex's native
+`plugin marketplace upgrade` and `plugin add` commands, followed by a strict native
+inventory check for canonical source, nondecreasing SemVer, and retained enabled
+state. The skill introduces no downloader, Git client, subprocess wrapper, or
+rollback claim and does not construct a credential-bearing environment. It never
+invokes plugin removal, rewrites config, reads credentials, or reads/writes routing,
+provider, chat, or session state.
+
 Provider API keys are accepted only by a hidden local prompt outside chat and are
 stored in the operating-system credential store. Codex retrieves a key at request
 time through documented command-backed auth and a stable helper under `CODEX_HOME`;
@@ -62,13 +72,32 @@ identity. Native providers remain
 `ROUTE_ACCEPTED` unless the host exposes mechanical provider/model metadata; model
 self-report is never confirmation.
 
-Native setup/status/disable and Fable authorization retain their full-state
-validators. The bundled Fable Planner/Advisor bridge disables tools and session
+Native setup/status/repair/disable and Fable authorization retain their full-state
+validators. Repair is allowed only when valid saved state exists, both live hint
+strings retain the ownership marker, and namespace, spawn metadata, Fable launcher
+enablement, scalar-conversion shape, and all other managed values still match. It
+restores only drifted mode/usage bytes through App Server compare-and-swap, verifies
+user and effective readback, rolls back on an override, preserves a concurrent edit,
+detects concurrent saved-state replacement without overwriting it, and never changes
+restore state, authentication, credentials, chats, or sessions.
+The bundled Fable Planner/Advisor bridge disables tools and session
 persistence, strips provider override credentials, and requires runtime usage
 metadata to contain the pinned Fable primary plus only explicitly allowlisted Claude
 Code helpers. The managed workflow authorizes only root to call planning tools, but
 MCP does not provide caller identity; that caller boundary remains
 instruction-enforced rather than server-authenticated.
+
+Routing schema/policy version 4 adds the optional Designer field while retaining
+strict validation for schemas 1–3. Legacy schemas cannot smuggle a Designer key,
+and persistent Designer accepts only a direct same-provider model, never the
+privileged Fable MCP route or a project-shadowable unqualified agent name.
+Cross-provider/custom Designers remain task-local and require current-project
+validation immediately before use. Designer authority is
+policy-bounded: it reports only to root, cannot contact other seats or spawn
+descendants, may edit only explicitly delegated design artifacts, and cannot alter
+the canonical plan, implementation code, approvals, or Executor release. These
+behavioral limits are instruction-enforced; normal Codex sandbox and approval
+controls remain the mechanical boundary.
 
 External providers receive delegated prompt content and may retain it under their
 own policies. OS credential stores, first-party subscription CLIs, Codex itself, and
