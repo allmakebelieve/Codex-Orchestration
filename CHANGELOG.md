@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.2 — Unreleased
+
+- Let native routing repair recover a Fable launcher override removed by a plugin
+  reinstall only when saved state proves the override was plugin-created and absent
+  before setup. Changed launcher values and ambiguous restore state still fail closed.
+
 ## 0.8.1 — Unreleased
 
 - Constrain Fable Planner revisions with Claude Code's JSON Schema output and

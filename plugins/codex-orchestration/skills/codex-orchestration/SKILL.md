@@ -60,7 +60,7 @@ the next action. Never answer that the plugin does not expose Kimi merely becaus
 Kimi-specific tool is absent; the route is materialized through the External Model
 lifecycle and a provider-pinned custom agent.
 
-`--update` securely refreshes this plugin from its canonical Git marketplace. `setup` installs or updates the personal one-time routing policy. `create project role` or `create personal role` creates native Codex custom-agent files. `status` inspects built-in routing. `repair` restores only saved managed hint bytes after narrow drift validation. `disable` restores pre-setup values.
+`--update` securely refreshes this plugin from its canonical Git marketplace. `setup` installs or updates the personal one-time routing policy. `create project role` or `create personal role` creates native Codex custom-agent files. `status` inspects built-in routing. `repair` restores only saved managed hints or proven missing plugin-created launcher overrides after narrow drift validation. `disable` restores pre-setup values.
 
 `remove custom roles` cleans only verified plugin-managed advisor/executor files. Arbitrary native roles are user-owned. An invocation with native seats and work but no control verb is a current-task override and must not rewrite config. Explicit External Model seat labels are the exception: they may perform only the clean preparation, connection, and readiness writes authorized in the External Model lifecycle below.
 
@@ -401,7 +401,8 @@ When status reports `managed fields conflict with local restore state`, do not r
 setup or disable over the conflict and do not assume authentication failed. A literal
 `repair` request makes the valid saved plugin state authoritative only for the
 following narrow recovery. Dry-run first, then apply only after the preview says the
-drift is limited to saved managed mode/usage hints:
+drift is limited to saved managed mode/usage hints or a missing Fable launcher
+override that the saved restore snapshot proves was absent before setup:
 
 ```bash
 python3 <skill-dir>/scripts/configure_native_routing.py \
@@ -414,14 +415,16 @@ python3 <skill-dir>/scripts/configure_native_routing.py \
 ```
 
 Repair must require valid saved state and both live hints to retain the plugin
-ownership marker. It must refuse namespace, spawn-metadata, Fable launcher,
-scalar-shape, missing/unmarked hint, or other managed drift. It writes only the
-different mode/usage fields through App Server compare-and-swap, leaves the original
-restore snapshot and seat records byte-for-byte unchanged, checks user and effective
-readback, rolls the two fields back when a higher layer overrides them, and preserves
-a concurrent config or saved-state edit instead of overwriting it. It never reads or
-changes authentication, credentials, chats, or sessions. After apply, run status with
-`--require-effective` and fully quit and reopen Codex before starting a new task.
+ownership marker. It may restore only different mode/usage fields and missing
+plugin-created Fable launcher overrides whose saved pre-setup values were absent. It
+must refuse changed launcher values, namespace, spawn-metadata, scalar-shape,
+missing/unmarked hint, or other managed drift. It writes through App Server
+compare-and-swap, leaves the original restore snapshot and seat records byte-for-byte
+unchanged, checks user and effective readback, rolls its writes back when a higher
+layer overrides them, and preserves a concurrent config or saved-state edit instead
+of overwriting it. It never reads or changes authentication, credentials, chats, or
+sessions. After apply, run status with `--require-effective` and fully quit and reopen
+Codex before starting a new task.
 
 To change seats, run normal `setup` again. The configurator keeps the original restore snapshot rather than treating its own managed values as user settings.
 

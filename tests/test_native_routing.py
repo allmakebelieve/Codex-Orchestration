@@ -1163,6 +1163,66 @@ class NativeRoutingTests(unittest.TestCase):
         self.assertIn("Fable launcher setting changed", refused.stderr)
         self.assertEqual(self.read_fake_config(), config)
 
+    def test_repair_restores_a_missing_plugin_created_fable_override(self) -> None:
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--advisor-fable",
+            "--apply",
+        )
+        state_path = self.home / NATIVE.STATE_FILENAME
+        state_bytes = state_path.read_bytes()
+        config = self.read_fake_config()
+        del config["plugins"][NATIVE.PLUGIN_ID]["mcp_servers"][
+            "fable-advisor-python3"
+        ]["enabled"]
+        (self.home / ".fake-user-config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+
+        preview = self.run_script("--repair")
+        self.assertIn("missing managed Fable launcher override", preview.stdout)
+        self.assertEqual(self.read_fake_config(), config)
+        self.assertEqual(state_path.read_bytes(), state_bytes)
+
+        repaired = self.run_script("--repair", "--apply")
+        self.assertIn("Native routing policy repaired", repaired.stdout)
+        after = self.read_fake_config()
+        servers = after["plugins"][NATIVE.PLUGIN_ID]["mcp_servers"]
+        self.assertTrue(servers["fable-advisor-python3"]["enabled"])
+        self.assertEqual(state_path.read_bytes(), state_bytes)
+        healthy = self.run_script("--status", "--require-effective")
+        self.assertIn("installed and effective", healthy.stdout)
+
+    def test_repair_rolls_back_a_missing_fable_override_when_overridden(self) -> None:
+        self.run_script(
+            "--executor-model",
+            "gpt-5.6-sol",
+            "--executor-effort",
+            "medium",
+            "--advisor-fable",
+            "--apply",
+        )
+        config = self.read_fake_config()
+        del config["plugins"][NATIVE.PLUGIN_ID]["mcp_servers"][
+            "fable-advisor-python3"
+        ]["enabled"]
+        serialized = json.dumps(config)
+        (self.home / ".fake-user-config.json").write_text(
+            serialized, encoding="utf-8"
+        )
+        (self.home / ".fake-effective-config.json").write_text(
+            serialized, encoding="utf-8"
+        )
+
+        repaired = self.run_script("--repair", "--apply", check=False)
+        self.assertEqual(repaired.returncode, 2)
+        self.assertIn("did not become effective", repaired.stderr)
+        self.assertEqual(self.read_fake_config(), config)
+        self.assertTrue((self.home / NATIVE.STATE_FILENAME).exists())
+
     def test_repair_refuses_integer_substitution_for_fable_boolean(self) -> None:
         self.run_script(
             "--executor-model",

@@ -74,12 +74,15 @@ self-report is never confirmation.
 
 Native setup/status/repair/disable and Fable authorization retain their full-state
 validators. Repair is allowed only when valid saved state exists, both live hint
-strings retain the ownership marker, and namespace, spawn metadata, Fable launcher
-enablement, scalar-conversion shape, and all other managed values still match. It
-restores only drifted mode/usage bytes through App Server compare-and-swap, verifies
-user and effective readback, rolls back on an override, preserves a concurrent edit,
-detects concurrent saved-state replacement without overwriting it, and never changes
-restore state, authentication, credentials, chats, or sessions.
+strings retain the ownership marker, and namespace, spawn metadata,
+scalar-conversion shape, and all other managed values still match. It restores only
+drifted mode/usage bytes and Fable launcher overrides that are missing while the
+saved pre-setup snapshot proves they were plugin-created from absence. Non-missing
+launcher changes and missing previously user-owned values fail closed. Repair uses
+App Server compare-and-swap, verifies user and effective readback, rolls back on an
+override, preserves a concurrent edit, detects concurrent saved-state replacement
+without overwriting it, and never changes restore state, authentication, credentials,
+chats, or sessions.
 The bundled Fable Planner/Advisor bridge disables tools and session
 persistence, strips provider override credentials, and requires runtime usage
 metadata to contain the pinned Fable primary plus only explicitly allowlisted Claude

@@ -410,7 +410,7 @@ class AppServer:
                     "clientInfo": {
                         "name": "codex_orchestration_installer",
                         "title": "Codex Orchestration Installer",
-                        "version": "0.8.1",
+                        "version": "0.8.2",
                     },
                     "capabilities": {"experimentalApi": True},
                 },
@@ -1636,10 +1636,11 @@ def _prepare_setup_state(
     return state, edits, rollback
 
 
-def _restore_pre_repair_hints(
+def _restore_pre_repair_values(
     app: AppServer,
     rollback: list[dict[str, Any]],
     expected: dict[str, Any],
+    expected_mcp: dict[str, Any],
     version: str | None,
     workspace: Path,
 ) -> None:
@@ -1654,8 +1655,13 @@ def _restore_pre_repair_hints(
     )
     user_config, _ = _user_layer(read_result)
     current = _current_values(user_config)
-    if any(current[field] != value for field, value in expected.items()):
-        raise ConfigurationError("pre-repair hint restoration could not be verified")
+    fields_match = all(current[field] == value for field, value in expected.items())
+    mcp_matches = all(
+        _strict_equal(current["mcp"].get(server, MISSING), value)
+        for server, value in expected_mcp.items()
+    )
+    if not fields_match or not mcp_matches:
+        raise ConfigurationError("pre-repair value restoration could not be verified")
 
 
 def _repair(
@@ -1666,7 +1672,7 @@ def _repair(
     workspace: Path,
     apply: bool,
 ) -> int:
-    """Restore only saved managed hint bytes after exact drift validation."""
+    """Restore saved managed hints and safely missing launcher overrides."""
 
     if state is None:
         raise ConfigurationError(
@@ -1676,18 +1682,9 @@ def _repair(
     if not isinstance(managed, dict):
         raise ConfigurationError("Routing repair state has no managed values.")
     current = _current_values(config)
-    drifted = [
+    drifted_hints = [
         field for field in ("mode", "usage") if current[field] != managed[field]
     ]
-    if not drifted:
-        if _managed_matches(state, current):
-            print("Native routing policy already matches its saved managed state.")
-            return 0
-        raise ConfigurationError(
-            "Routing repair permits only managed mode/usage drift; another owned "
-            "control or Fable launcher setting changed."
-        )
-
     if any(not _is_managed(current[field]) for field in ("mode", "usage")):
         raise ConfigurationError(
             "Routing repair requires both live hints to retain the managed ownership "
@@ -1698,14 +1695,44 @@ def _repair(
         and current["namespace"] == ROUTING_TOOL_NAMESPACE
     )
     managed_mcp = managed.get("mcp")
-    mcp_matches = managed_mcp is None or all(
-        _strict_equal(current["mcp"].get(server, MISSING), enabled)
-        for server, enabled in managed_mcp.items()
-    )
-    if not controls_match or not mcp_matches:
+    previous = state.get("previous")
+    previous_mcp = previous.get("mcp") if isinstance(previous, dict) else None
+    recoverable_mcp: dict[str, bool] = {}
+    unrecoverable_mcp: list[str] = []
+    if isinstance(managed_mcp, dict):
+        for server, enabled in managed_mcp.items():
+            observed = current["mcp"].get(server, MISSING)
+            if _strict_equal(observed, enabled):
+                continue
+            saved = (
+                previous_mcp.get(server)
+                if isinstance(previous_mcp, dict)
+                else None
+            )
+            if (
+                observed is MISSING
+                and isinstance(saved, dict)
+                and saved.get("known") is True
+                and saved.get("present") is False
+            ):
+                recoverable_mcp[server] = enabled
+            else:
+                unrecoverable_mcp.append(server)
+
+    if not drifted_hints and not recoverable_mcp:
+        if _managed_matches(state, current):
+            print("Native routing policy already matches its saved managed state.")
+            return 0
         raise ConfigurationError(
-            "Routing repair permits only managed mode/usage drift; another owned "
-            "control or Fable launcher setting changed."
+            "Routing repair permits only managed mode/usage drift or missing "
+            "plugin-created Fable launcher overrides; another owned control changed."
+        )
+
+    if not controls_match or unrecoverable_mcp:
+        raise ConfigurationError(
+            "Routing repair permits only managed mode/usage drift or missing "
+            "plugin-created Fable launcher overrides; another owned control or "
+            "Fable launcher setting changed."
         )
 
     if isinstance(state.get("scalar_origin"), bool):
@@ -1734,7 +1761,7 @@ def _repair(
             "value": managed[field],
             "mergeStrategy": "replace",
         }
-        for field in drifted
+        for field in drifted_hints
     ]
     rollback = [
         {
@@ -1742,15 +1769,36 @@ def _repair(
             "value": current[field],
             "mergeStrategy": "replace",
         }
-        for field in drifted
+        for field in drifted_hints
     ]
-    rendered = " and ".join(drifted)
-    label = "hint" if len(drifted) == 1 else "hints"
+    for server, enabled in recoverable_mcp.items():
+        edits.append(
+            {
+                "keyPath": fable_key_path(server),
+                "value": enabled,
+                "mergeStrategy": "replace",
+            }
+        )
+        rollback.append(
+            {
+                "keyPath": fable_key_path(server),
+                "value": None,
+                "mergeStrategy": "replace",
+            }
+        )
+
     print(f"Config: {app.config_path}")
-    print(f"Will restore saved managed {rendered} {label} only.")
+    if drifted_hints:
+        rendered = " and ".join(drifted_hints)
+        label = "hint" if len(drifted_hints) == 1 else "hints"
+        suffix = "" if recoverable_mcp else " only"
+        print(f"Will restore saved managed {rendered} {label}{suffix}.")
+    if recoverable_mcp:
+        rendered = ", ".join(sorted(recoverable_mcp))
+        print(f"Will restore missing managed Fable launcher override: {rendered}.")
     print(
         "Will preserve the restore snapshot, seat routes, namespace, spawn metadata, "
-        "Fable launcher enablement, credentials, chats, and sessions."
+        "credentials, chats, and sessions."
     )
     fable_configured = any(
         isinstance(route, dict) and route.get("kind") == "fable"
@@ -1768,10 +1816,11 @@ def _repair(
     result = _batch_write(app, edits, version, reload_user_config=True)
     if result.get("status") == "okOverridden":
         try:
-            _restore_pre_repair_hints(
+            _restore_pre_repair_values(
                 app,
                 rollback,
-                {field: current[field] for field in drifted},
+                {field: current[field] for field in drifted_hints},
+                {server: MISSING for server in recoverable_mcp},
                 result.get("version"),
                 workspace,
             )
@@ -1806,10 +1855,11 @@ def _repair(
         )
     if not _managed_matches(state, effective_current):
         try:
-            _restore_pre_repair_hints(
+            _restore_pre_repair_values(
                 app,
                 rollback,
-                {field: current[field] for field in drifted},
+                {field: current[field] for field in drifted_hints},
+                {server: MISSING for server in recoverable_mcp},
                 verify_version,
                 workspace,
             )
