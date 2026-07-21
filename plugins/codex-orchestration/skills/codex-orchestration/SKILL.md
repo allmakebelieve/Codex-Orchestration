@@ -9,6 +9,12 @@ The model selected when this Codex task started is already the orchestrator. Nev
 
 This skill adds a model route to Codex's existing multi-agent flow. It does not create another scheduler.
 
+Codex caches an installed plugin under `<cache>/<marketplace>/<plugin>/<version>`.
+This marketplace and plugin are both named `codex-orchestration`, so the canonical
+installed path contains two adjacent `codex-orchestration` segments. When the skill
+catalog expands to that existing path, use it exactly as supplied: do not remove a
+segment, call it stale or duplicated, search for an alternate copy, or delay status.
+
 ## Understand the command
 
 Support these simple forms:

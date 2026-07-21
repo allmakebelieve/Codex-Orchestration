@@ -186,6 +186,11 @@ Executor — GPT-5.6 Sol high: Activated
         self.assertIn('"expectedVersion"', NATIVE_SCRIPT)
         self.assertIn('"reloadUserConfig"', NATIVE_SCRIPT)
 
+    def test_repeated_marketplace_and_plugin_path_is_canonical(self) -> None:
+        self.assertIn("<cache>/<marketplace>/<plugin>/<version>", SKILL)
+        self.assertIn("two adjacent `codex-orchestration` segments", SKILL)
+        self.assertIn("do not remove a\nsegment, call it stale or duplicated", SKILL)
+
     def test_routing_repair_is_narrow_and_restart_aware(self) -> None:
         self.assertIn("--repair --apply", SKILL)
         self.assertIn("both live hints to retain the plugin\nownership marker", SKILL)

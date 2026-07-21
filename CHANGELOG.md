@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.3 — Unreleased
+
+- Document the canonical repeated marketplace/plugin cache path so agents use the
+  catalog path directly instead of misdiagnosing it as stale or duplicated.
+
 ## 0.8.2 — Unreleased
 
 - Let native routing repair recover a Fable launcher override removed by a plugin
