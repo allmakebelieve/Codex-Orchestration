@@ -24,6 +24,10 @@ assert SPEC and SPEC.loader
 CONFIG = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CONFIG)
 
+FAKE_CODEX_DIR = Path(tempfile.gettempdir()).resolve() / "codex-orchestration-tests"
+FAKE_CODEX_BIN = FAKE_CODEX_DIR / "codex"
+FAKE_RESOLVED_CODEX_BIN = FAKE_CODEX_DIR / "resolved-codex"
+
 
 class FakeBackend:
     def __init__(self) -> None:
@@ -143,7 +147,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
                 CONFIG.native_routing, "AppServer", FakeAppServer
             ), mock.patch.object(
                 CONFIG.external_cli_trust, "fingerprint",
-                return_value=(Path("/real/codex"), "same"),
+                return_value=(FAKE_RESOLVED_CODEX_BIN, "same"),
             ), mock.patch.object(
                 CONFIG.external_cli_trust, "version", return_value="codex 0.144.1"
             ), mock.patch.object(
@@ -156,12 +160,12 @@ class ExternalConfiguratorTests(unittest.TestCase):
                 os.environ, {"OPENROUTER_API_KEY": "sentinel-app-server-secret"}
             ):
                 result = CONFIG.main([
-                    "--codex-home", str(home), "--codex-bin", "/safe/codex",
+                    "--codex-home", str(home), "--codex-bin", str(FAKE_CODEX_BIN),
                     "invoke", "--role", "researcher", "--effort", "max",
                 ])
             self.assertEqual(result, 0)
-            self.assertEqual(observed["binary"], Path("/real/codex"))
-            self.assertEqual(invoke.call_args.args[5], Path("/real/codex"))
+            self.assertEqual(observed["binary"], FAKE_RESOLVED_CODEX_BIN)
+            self.assertEqual(invoke.call_args.args[5], FAKE_RESOLVED_CODEX_BIN)
             self.assertEqual(
                 observed["environment"], {"PATH": "/safe/bin", "KEEP": "yes"}
             )
@@ -181,7 +185,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
             ],
         ):
             advertised = CONFIG._verify_invoke_cli_contract(
-                Path("/safe/codex"), cwd=Path("/safe"), environment={}
+                FAKE_CODEX_BIN, cwd=FAKE_CODEX_DIR, environment={}
             )
         self.assertEqual(
             advertised,
@@ -201,7 +205,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
             ],
         ):
             advertised = CONFIG._verify_invoke_cli_contract(
-                Path("/safe/codex"), cwd=Path("/safe"), environment={}
+                FAKE_CODEX_BIN, cwd=FAKE_CODEX_DIR, environment={}
             )
         self.assertEqual(advertised, CONFIG.INVOKE_DISABLED_FEATURES)
 
@@ -220,7 +224,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
             ):
                 with self.assertRaises(CONFIG.ExternalConfigurationError) as failure:
                     CONFIG._verify_invoke_cli_contract(
-                        Path("/safe/codex"), cwd=Path("/safe"), environment={}
+                        FAKE_CODEX_BIN, cwd=FAKE_CODEX_DIR, environment={}
                     )
                 self.assertNotIn("provider-secret", str(failure.exception))
 
@@ -243,7 +247,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
                     "required feature controls are unavailable",
                 ):
                     CONFIG._verify_invoke_cli_contract(
-                        Path("/safe/codex"), cwd=Path("/safe"), environment={}
+                        FAKE_CODEX_BIN, cwd=FAKE_CODEX_DIR, environment={}
                     )
 
     def test_invoke_rejects_packet_boundaries_before_resolution(self) -> None:
@@ -312,7 +316,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
 
             with mock.patch.object(
                 CONFIG.external_cli_trust, "fingerprint",
-                side_effect=[(Path("/safe/codex"), "same"), (Path("/safe/codex"), "same")],
+                side_effect=[(FAKE_CODEX_BIN, "same"), (FAKE_CODEX_BIN, "same")],
             ), mock.patch.object(
                 CONFIG.external_cli_trust, "version", return_value="codex 1.0"
             ), mock.patch.object(
@@ -322,7 +326,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
             ):
                 result = CONFIG.invoke_role(
                     home, "researcher", "max", packet, backend,
-                    Path("/safe/codex"), workspace=home,
+                    FAKE_CODEX_BIN, workspace=home,
                 )
             self.assertEqual(result["output"], "safe result")
             command = observed["command"]
@@ -366,7 +370,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
         ) as popen, mock.patch.object(CONFIG.os, "killpg") as killpg:
             with self.assertRaisesRegex(CONFIG.ExternalConfigurationError, "timed out"):
                 CONFIG._run_invoke_process(
-                    ["/safe/codex"], cwd=Path("/safe"), environment={}, prompt=b"packet"
+                    [str(FAKE_CODEX_BIN)], cwd=FAKE_CODEX_DIR, environment={}, prompt=b"packet"
                 )
         self.assertTrue(popen.call_args.kwargs["start_new_session"])
         killpg.assert_called_once_with(4242, CONFIG.signal.SIGKILL)
@@ -394,7 +398,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
         ), mock.patch.object(CONFIG.os, "killpg") as killpg:
             with self.assertRaises(KeyboardInterrupt):
                 CONFIG._run_invoke_process(
-                    ["/safe/codex"], cwd=Path("/safe"), environment={}, prompt=b"packet"
+                    [str(FAKE_CODEX_BIN)], cwd=FAKE_CODEX_DIR, environment={}, prompt=b"packet"
                 )
         killpg.assert_called_once_with(4343, CONFIG.signal.SIGKILL)
         process.wait.assert_called_once_with(timeout=5)
@@ -423,7 +427,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
                 CONFIG.external_credentials, "credential_ready", return_value=True
             ), mock.patch.object(
                 CONFIG.external_cli_trust, "fingerprint",
-                side_effect=[(Path("/safe/codex"), "before"), (Path("/safe/codex"), "after")],
+                side_effect=[(FAKE_CODEX_BIN, "before"), (FAKE_CODEX_BIN, "after")],
             ), mock.patch.object(
                 CONFIG.external_cli_trust, "version", return_value="codex 1.0"
             ), mock.patch.object(
@@ -435,7 +439,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
                 with self.assertRaisesRegex(CONFIG.ExternalConfigurationError, "CLI_CHANGED"):
                     CONFIG.invoke_role(
                         home, "researcher", "max", b"packet", backend,
-                        Path("/safe/codex"), workspace=home,
+                        FAKE_CODEX_BIN, workspace=home,
                     )
             popen.assert_not_called()
 
@@ -454,7 +458,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
                 CONFIG.external_credentials, "credential_ready", return_value=True
             ), mock.patch.object(
                 CONFIG.external_cli_trust, "fingerprint",
-                side_effect=[(Path("/safe/codex"), "same"), (Path("/safe/codex"), "same")],
+                side_effect=[(FAKE_CODEX_BIN, "same"), (FAKE_CODEX_BIN, "same")],
             ), mock.patch.object(
                 CONFIG.external_cli_trust, "version", return_value="codex 1.0"
             ), mock.patch.object(
@@ -465,7 +469,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
                 with self.assertRaises(CONFIG.ExternalConfigurationError) as failure:
                     CONFIG.invoke_role(
                         home, "researcher", "max", b"sentinel-provider-output",
-                        backend, Path("/safe/codex"), workspace=home,
+                        backend, FAKE_CODEX_BIN, workspace=home,
                     )
             self.assertIn("exit 9", str(failure.exception))
             self.assertNotIn("sentinel-provider-output", str(failure.exception))
@@ -503,7 +507,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
                 CONFIG.external_credentials, "credential_ready", return_value=True
             ), mock.patch.object(
                 CONFIG.external_cli_trust, "fingerprint",
-                side_effect=[(Path("/safe/codex"), "same"), (Path("/safe/codex"), "same")],
+                side_effect=[(FAKE_CODEX_BIN, "same"), (FAKE_CODEX_BIN, "same")],
             ), mock.patch.object(
                 CONFIG.external_cli_trust, "version", return_value="codex 0.144.1"
             ), mock.patch.object(
@@ -514,7 +518,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
                 ):
                     CONFIG.invoke_role(
                         home, "researcher", "max", b"packet", backend,
-                        Path("/safe/codex"), workspace=home,
+                        FAKE_CODEX_BIN, workspace=home,
                     )
             run.assert_not_called()
 
@@ -1121,7 +1125,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
                     "openrouter",
                     "moonshotai/kimi-k3",
                     "max",
-                    Path("/safe/codex"),
+                    FAKE_CODEX_BIN,
                     acknowledge_billing=False,
                 )
             completed = mock.Mock(
@@ -1157,14 +1161,14 @@ class ExternalConfiguratorTests(unittest.TestCase):
                         "openrouter",
                         "moonshotai/kimi-k3",
                         "max",
-                        Path("/safe/codex"),
+                        FAKE_CODEX_BIN,
                         acknowledge_billing=True,
                     )
             self.assertNotIn("sensitive-test-value", str(failure.exception))
             sanitized.assert_called_once_with()
             self.assertEqual(run.call_count, 2)
             command = run.call_args.args[0]
-            self.assertEqual(command[:2], [str(Path("/safe/codex")), "exec"])
+            self.assertEqual(command[:2], [str(FAKE_CODEX_BIN), "exec"])
             self.assertIn("--ephemeral", command)
             self.assertIn("--skip-git-repo-check", command)
             self.assertEqual(command[command.index("--sandbox") + 1], "read-only")
@@ -1227,7 +1231,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
                     "openrouter",
                     "moonshotai/kimi-k3",
                     "max",
-                    Path("/safe/codex"),
+                    FAKE_CODEX_BIN,
                     acknowledge_billing=True,
                 )
             self.assertIn(
@@ -1262,7 +1266,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
                     "openrouter",
                     "moonshotai/kimi-k3",
                     "max",
-                    Path("/safe/codex"),
+                    FAKE_CODEX_BIN,
                     acknowledge_billing=True,
                 )
 
@@ -1292,7 +1296,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
                         "openrouter",
                         "moonshotai/kimi-k3",
                         "max",
-                        Path("/safe/codex"),
+                        FAKE_CODEX_BIN,
                         acknowledge_billing=True,
                     )
             self.assertEqual(run.call_count, 1)
@@ -1380,7 +1384,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
                         "openrouter",
                         "moonshotai/kimi-k3",
                         "max",
-                        Path("/safe/codex"),
+                        FAKE_CODEX_BIN,
                         acknowledge_billing=True,
                     )
 
@@ -1429,7 +1433,7 @@ class ExternalConfiguratorTests(unittest.TestCase):
                             "openrouter",
                             "moonshotai/kimi-k3",
                             "max",
-                            Path("/safe/codex"),
+                            FAKE_CODEX_BIN,
                             acknowledge_billing=True,
                         )
 
