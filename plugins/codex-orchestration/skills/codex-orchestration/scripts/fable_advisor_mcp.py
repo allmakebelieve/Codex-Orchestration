@@ -120,6 +120,21 @@ def sanitized_environment() -> dict[str, str]:
     return env
 
 
+def claude_subprocess_cwd() -> Path:
+    """Return a stable cwd that survives plugin cache replacement."""
+
+    candidate = codex_home()
+    try:
+        resolved = candidate.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise AdvisorError(
+            "Codex home is unavailable for Claude Code subprocesses."
+        ) from exc
+    if not resolved.is_dir():
+        raise AdvisorError("Codex home is unavailable for Claude Code subprocesses.")
+    return resolved
+
+
 def resolve_claude() -> Path:
     found = shutil.which("claude")
     if found:
@@ -139,6 +154,7 @@ def _run_json(command: list[str], *, timeout: int) -> dict[str, Any]:
     try:
         result = subprocess.run(
             command,
+            cwd=claude_subprocess_cwd(),
             env=sanitized_environment(),
             text=True,
             stdout=subprocess.PIPE,
@@ -392,6 +408,7 @@ def _invoke_fable(
     try:
         result = subprocess.run(
             command,
+            cwd=claude_subprocess_cwd(),
             input=prompt,
             env=sanitized_environment(),
             text=True,

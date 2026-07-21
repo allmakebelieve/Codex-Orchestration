@@ -410,7 +410,7 @@ class AppServer:
                     "clientInfo": {
                         "name": "codex_orchestration_installer",
                         "title": "Codex Orchestration Installer",
-                        "version": "0.8.3",
+                        "version": "0.8.4",
                     },
                     "capabilities": {"experimentalApi": True},
                 },

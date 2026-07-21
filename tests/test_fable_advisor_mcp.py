@@ -238,10 +238,48 @@ class FableAdvisorMcpTests(unittest.TestCase):
         self.assertEqual(review_kwargs["timeout"], FABLE.CLAUDE_TIMEOUT_SECONDS)
         self.assertEqual(review_kwargs["input"], "Review this complete plan.")
         for kwargs in (auth_kwargs, review_kwargs):
+            self.assertEqual(kwargs["cwd"], self.home.resolve())
             sanitized = kwargs["env"]
             self.assertIsInstance(sanitized, dict)
             for name in FABLE.SENSITIVE_ENV:
                 self.assertNotIn(name, sanitized)
+
+    @unittest.skipIf(os.name == "nt", "Windows cannot unlink the active cwd")
+    def test_auth_probe_survives_deleted_plugin_working_directory(self) -> None:
+        stale_parent = self.home / "plugin-cache"
+        stale_cwd = stale_parent / "old-version"
+        stale_cwd.mkdir(parents=True)
+        try:
+            os.chdir(stale_cwd)
+            stale_cwd.rmdir()
+            with mock.patch.dict(os.environ, {"CODEX_HOME": str(self.home)}):
+                payload = FABLE._run_json(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import json; print(json.dumps({'loggedIn': True}))",
+                    ],
+                    timeout=10,
+                )
+        finally:
+            os.chdir(REPO_ROOT)
+        self.assertEqual(payload, {"loggedIn": True})
+
+    def test_claude_subprocess_cwd_rejects_missing_or_non_directory_home(self) -> None:
+        invalid_homes = (self.home / "missing", self.home / "not-a-directory")
+        invalid_homes[1].write_text("not a directory", encoding="utf-8")
+        for invalid_home in invalid_homes:
+            with self.subTest(invalid_home=invalid_home):
+                with (
+                    mock.patch.dict(
+                        os.environ, {"CODEX_HOME": str(invalid_home)}, clear=False
+                    ),
+                    self.assertRaisesRegex(
+                        FABLE.AdvisorError,
+                        "Codex home is unavailable for Claude Code subprocesses",
+                    ),
+                ):
+                    FABLE.claude_subprocess_cwd()
 
     def test_runtime_model_policy_accepts_only_fable_and_exact_allowed_helper(
         self,

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.4 — Unreleased
+
+- Launch every Claude Code authentication and Fable subprocess from the stable
+  Codex home instead of the versioned plugin cache. An in-place plugin upgrade can
+  now remove the old cache directory without making a loaded bridge report a false
+  authentication failure.
+
 ## 0.8.3 — Unreleased
 
 - Document the canonical repeated marketplace/plugin cache path so agents use the
