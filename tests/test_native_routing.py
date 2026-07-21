@@ -1863,6 +1863,10 @@ class NativeRoutingTests(unittest.TestCase):
             "--apply",
         )
         self.assertIn("Planner: Claude Fable 5 max", setup.stdout)
+        config = self.read_fake_config()
+        usage = config["features"]["multi_agent_v2"]["usage_hint_text"]
+        self.assertIn("operation_id", usage)
+        self.assertIn("get_plan_revision", usage)
         state = json.loads(
             (self.home / NATIVE.STATE_FILENAME).read_text(encoding="utf-8")
         )

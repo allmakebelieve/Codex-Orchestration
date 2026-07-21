@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.1 — Unreleased
+
+- Constrain Fable Planner revisions with Claude Code's JSON Schema output and
+  reconstruct the existing `PLAN_REVISION` contract from validated structured
+  fields, preventing harmless prose formatting from blocking the approval loop.
+- Give long plan revisions an 1800-second subprocess timeout, a 1900-second
+  Codex MCP host timeout, and bounded process-local
+  idempotency: callers may supply an operation ID, retry identical inputs, or
+  retrieve a completed revision without another model call; changed-input reuse
+  fails closed and no plan result is written to disk.
+
 ## 0.8.0 — Unreleased
 
 - Replace READY External Model execution through Desktop native agents with a

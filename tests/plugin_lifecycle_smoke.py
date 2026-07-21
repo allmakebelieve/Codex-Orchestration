@@ -32,7 +32,7 @@ PLUGIN_ID = "codex-orchestration@codex-orchestration"
 MARKETPLACE_NAME = "codex-orchestration"
 OLD_RELEASE = "a1d9c546665c3253cdcaa8fe5c0c060199a6126c"
 OLD_VERSION = "0.5.0"
-NEW_VERSION = "0.8.0"
+NEW_VERSION = "0.8.1"
 COMMAND_TIMEOUT_SECONDS = 60
 
 
@@ -134,7 +134,13 @@ def probe_mcp_subprocess(script: Path, *, cwd: Path, env: dict[str, str]) -> Non
     }
     assert_equal(
         tool_names,
-        {"create_plan", "revise_plan", "review_plan", "status"},
+        {
+            "create_plan",
+            "revise_plan",
+            "get_plan_revision",
+            "review_plan",
+            "status",
+        },
         "installed Fable MCP tool list",
     )
 
@@ -530,6 +536,7 @@ def main() -> int:
                 "Explicit seat labels are authoritative",
                 "never reinterpret a supplied `planner:` model as an Advisor",
                 "Fable Planner uses `create_plan` and `revise_plan`",
+                "`get_plan_revision` can retrieve a completed result",
                 "Designer may edit only explicitly delegated design artifacts",
                 "is Kimi available to use as Designer?",
                 "Implicit invocation is discovery, not mutation authority",

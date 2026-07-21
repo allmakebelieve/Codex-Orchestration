@@ -410,7 +410,7 @@ class AppServer:
                     "clientInfo": {
                         "name": "codex_orchestration_installer",
                         "title": "Codex Orchestration Installer",
-                        "version": "0.8.0",
+                        "version": "0.8.1",
                     },
                     "capabilities": {"experimentalApi": True},
                 },
@@ -1055,7 +1055,9 @@ Planner and Advisor are policy-isolated, root-directed seats: they cannot contac
             f"{json.dumps(planner['server'])}; after PLAN_REVISE, call `revise_plan` "
             "from that server. These are root tool calls. Require PLAN_DRAFT from "
             "creation, then assign the canonical version. Require PLAN_REVISION, "
-            "FINDINGS_LEDGER, and REVISED_PLAN from each revision."
+            "FINDINGS_LEDGER, and REVISED_PLAN from each revision. Supply a stable "
+            "caller-known `operation_id` for each revision; retry identical inputs "
+            "with that ID or call `get_plan_revision` after a caller-side timeout."
         )
     elif planner is not None:
         planner_hint = (

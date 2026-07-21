@@ -30,6 +30,7 @@ SPEC.loader.exec_module(FABLE)
 
 class FableAdvisorMcpTests(unittest.TestCase):
     def setUp(self) -> None:
+        FABLE._REVISION_CACHE.clear()
         self.temp = tempfile.TemporaryDirectory()
         self.home = Path(self.temp.name)
         self.write_state(advisor=self.route("high"))
@@ -118,18 +119,23 @@ class FableAdvisorMcpTests(unittest.TestCase):
         )
 
     def model_result(
-        self, response: str, *, model_usage: dict[str, object] | None = None
+        self,
+        response: str,
+        *,
+        model_usage: dict[str, object] | None = None,
+        structured_output: object | None = None,
     ) -> subprocess.CompletedProcess[str]:
+        payload: dict[str, object] = {
+            "result": response,
+            "modelUsage": model_usage
+            if model_usage is not None
+            else {"claude-fable-5": {"outputTokens": 12}},
+        }
+        if structured_output is not None:
+            payload["structured_output"] = structured_output
         return self.completed(
             ["claude"],
-            json.dumps(
-                {
-                    "result": response,
-                    "modelUsage": model_usage
-                    if model_usage is not None
-                    else {"claude-fable-5": {"outputTokens": 12}},
-                }
-            ),
+            json.dumps(payload),
         )
 
     def invoke_with_results(
@@ -138,6 +144,7 @@ class FableAdvisorMcpTests(unittest.TestCase):
         *args: str,
         model_response: str,
         model_usage: dict[str, object] | None = None,
+        structured_output: object | None = None,
     ) -> tuple[dict[str, object], list[tuple[list[str], dict[str, object]]]]:
         calls: list[tuple[list[str], dict[str, object]]] = []
 
@@ -147,7 +154,11 @@ class FableAdvisorMcpTests(unittest.TestCase):
             calls.append((command, kwargs))
             if command[-2:] == ["auth", "status"]:
                 return self.auth_result()
-            return self.model_result(model_response, model_usage=model_usage)
+            return self.model_result(
+                model_response,
+                model_usage=model_usage,
+                structured_output=structured_output,
+            )
 
         with (
             mock.patch.dict(os.environ, {"CODEX_HOME": str(self.home)}),
@@ -218,6 +229,8 @@ class FableAdvisorMcpTests(unittest.TestCase):
         self.assertEqual(
             review_command[review_command.index("--output-format") + 1], "json"
         )
+        self.assertNotIn("--json-schema", review_command)
+        self.assertEqual(review_kwargs["timeout"], FABLE.CLAUDE_TIMEOUT_SECONDS)
         self.assertEqual(review_kwargs["input"], "Review this complete plan.")
         for kwargs in (auth_kwargs, review_kwargs):
             sanitized = kwargs["env"]
@@ -424,20 +437,20 @@ class FableAdvisorMcpTests(unittest.TestCase):
                 with self.assertRaisesRegex(FABLE.AdvisorError, "non-empty string"):
                     FABLE.revise_plan(*values)
 
-        valid = (
-            "PLAN_REVISION\n\n"
-            "## FINDINGS_LEDGER\n"
-            "- F-1 — INCORPORATED: add verification.\n\n"
-            "## REVISED_PLAN\n"
-            "Version: v2 (source v1)\n1. Add verification."
-        )
+        structured = {
+            "signal": "PLAN_REVISION",
+            "findings_ledger": "- F-1 — INCORPORATED: add verification.",
+            "revised_plan": "Version: v2 (source v1)\n1. Add verification.",
+        }
         result, calls = self.invoke_with_results(
             FABLE.revise_plan,
             "original task",
             "Version v1\nplan",
             "F-1: missing verification",
             "F-0 incorporated",
-            model_response=valid,
+            "revision-valid",
+            model_response="Free-form text without a plan signal is ignored.",
+            structured_output=structured,
         )
         self.assertEqual(result["signal"], "PLAN_REVISION")
         self.assertIn("## REVISED_PLAN", result["revision"])
@@ -446,9 +459,53 @@ class FableAdvisorMcpTests(unittest.TestCase):
         self.assertIn("# CANONICAL_CURRENT_PLAN_WITH_SOURCE_VERSION", prompt)
         self.assertIn("# LATEST_ADVISOR_CRITIQUE_WITH_STABLE_FINDING_IDS", prompt)
         self.assertIn("# COMPACT_CUMULATIVE_FINDINGS_HISTORY", prompt)
+        command = calls[1][0]
+        self.assertIn("--json-schema", command)
+        schema = json.loads(command[command.index("--json-schema") + 1])
+        self.assertEqual(schema, FABLE.PLAN_REVISION_SCHEMA)
+        self.assertEqual(
+            calls[1][1]["timeout"], FABLE.PLAN_REVISION_TIMEOUT_SECONDS
+        )
+
+        malformed_structured_outputs = (
+            {"findings_ledger": "F-1", "revised_plan": "plan"},
+            {
+                "signal": "PLAN_DRAFT",
+                "findings_ledger": "F-1",
+                "revised_plan": "plan",
+            },
+            {
+                "signal": "PLAN_REVISION",
+                "findings_ledger": "",
+                "revised_plan": "plan",
+            },
+            {
+                "signal": "PLAN_REVISION",
+                "findings_ledger": "F-1",
+                "revised_plan": " ",
+            },
+            {
+                "signal": "PLAN_REVISION",
+                "findings_ledger": "F-1",
+                "revised_plan": "plan",
+                "extra": "not allowed",
+            },
+        )
+        for index, structured_output in enumerate(malformed_structured_outputs):
+            with self.subTest(structured_output=structured_output):
+                with self.assertRaisesRegex(FABLE.AdvisorError, "structured output"):
+                    self.invoke_with_results(
+                        FABLE.revise_plan,
+                        "task",
+                        "v1 plan",
+                        "F-1",
+                        "history",
+                        f"malformed-{index}",
+                        model_response="ignored",
+                        structured_output=structured_output,
+                    )
 
         malformed_responses = (
-            "PLAN_DRAFT\n## FINDINGS_LEDGER\nF-1\n## REVISED_PLAN\nplan",
             "PLAN_REVISION\n## REVISED_PLAN\nplan",
             "PLAN_REVISION\n## FINDINGS_LEDGER\n\n## REVISED_PLAN\nplan",
             "PLAN_REVISION\n## FINDINGS_LEDGER\nF-1\n## REVISED_PLAN\n",
@@ -460,37 +517,106 @@ class FableAdvisorMcpTests(unittest.TestCase):
         for response in malformed_responses:
             with self.subTest(response=response):
                 with self.assertRaises(FABLE.AdvisorError):
+                    FABLE._validate_revision_structure(response)
+
+    def test_revision_retry_and_fetch_are_idempotent_and_fail_closed(self) -> None:
+        self.write_state(planner=self.route())
+        inputs = ("task", "v1 plan", "F-1", "history", "revision-retry")
+        structured = {
+            "signal": "PLAN_REVISION",
+            "findings_ledger": "F-1 — INCORPORATED: reason",
+            "revised_plan": "v2 plan",
+        }
+        first, first_calls = self.invoke_with_results(
+            FABLE.revise_plan,
+            *inputs,
+            model_response="ignored",
+            structured_output=structured,
+        )
+        second, second_calls = self.invoke_with_results(
+            FABLE.revise_plan,
+            *inputs,
+            model_response="must not be used",
+            structured_output={"must": "not run"},
+        )
+        self.assertFalse(first["cache_hit"])
+        self.assertTrue(second["cache_hit"])
+        self.assertEqual(first["operation_id"], "revision-retry")
+        self.assertEqual(first["revision"], second["revision"])
+        command = first_calls[1][0]
+        self.assertEqual(command.count("--no-session-persistence"), 1)
+        self.assertNotIn("--resume", command)
+        self.assertNotIn("--session-id", command)
+        self.assertEqual(len(second_calls), 1)
+        self.assertEqual(second_calls[0][0][-2:], ["auth", "status"])
+
+        with (
+            mock.patch.dict(os.environ, {"CODEX_HOME": str(self.home)}),
+            mock.patch.object(
+                FABLE,
+                "check_claude_auth",
+                return_value={
+                    "auth_method": "claude.ai",
+                    "api_provider": "firstParty",
+                },
+            ),
+        ):
+            fetched = FABLE.get_plan_revision("revision-retry")
+            with self.assertRaisesRegex(FABLE.AdvisorError, "No completed"):
+                FABLE.get_plan_revision("revision-missing")
+        self.assertTrue(fetched["cache_hit"])
+        self.assertEqual(fetched["revision"], first["revision"])
+
+        with self.assertRaisesRegex(FABLE.AdvisorError, "different inputs"):
+            self.invoke_with_results(
+                FABLE.revise_plan,
+                "task",
+                "changed plan",
+                "F-1",
+                "history",
+                "revision-retry",
+                model_response="must not be used",
+            )
+
+    def test_revision_operation_ids_and_completed_cache_are_bounded(self) -> None:
+        self.write_state(planner=self.route())
+        for operation_id in ("", "contains space", "x" * 129):
+            with self.subTest(operation_id=operation_id):
+                with self.assertRaisesRegex(FABLE.AdvisorError, "operation_id"):
                     self.invoke_with_results(
                         FABLE.revise_plan,
                         "task",
                         "v1 plan",
                         "F-1",
                         "history",
-                        model_response=response,
+                        operation_id,
+                        model_response="must not be used",
                     )
 
-    def test_repeated_revisions_are_fresh_and_never_use_sessions(self) -> None:
-        self.write_state(planner=self.route())
-        response = (
-            "PLAN_REVISION\n## FINDINGS_LEDGER\n"
-            "F-1 — INCORPORATED: reason\n## REVISED_PLAN\nv2 plan"
-        )
-        all_commands: list[list[str]] = []
-        for _ in range(2):
-            _, calls = self.invoke_with_results(
+        structured = {
+            "signal": "PLAN_REVISION",
+            "findings_ledger": "F-1 — INCORPORATED: reason",
+            "revised_plan": "v2 plan",
+        }
+        operation_ids = []
+        for index in range(FABLE.REVISION_CACHE_MAX_ENTRIES + 1):
+            result, _ = self.invoke_with_results(
                 FABLE.revise_plan,
-                "task",
+                f"task-{index}",
                 "v1 plan",
                 "F-1",
                 "history",
-                model_response=response,
+                model_response="ignored",
+                structured_output=structured,
             )
-            all_commands.append(calls[1][0])
-        self.assertEqual(len(all_commands), 2)
-        for command in all_commands:
-            self.assertEqual(command.count("--no-session-persistence"), 1)
-            self.assertNotIn("--resume", command)
-            self.assertNotIn("--session-id", command)
+            operation_ids.append(result["operation_id"])
+        self.assertEqual(len(FABLE._REVISION_CACHE), FABLE.REVISION_CACHE_MAX_ENTRIES)
+        self.assertNotIn(operation_ids[0], FABLE._REVISION_CACHE)
+        self.assertEqual(
+            set(FABLE._REVISION_CACHE), set(operation_ids[1:])
+        )
+        for operation_id in operation_ids:
+            self.assertRegex(operation_id, r"^sha256:[0-9a-f]{64}$")
 
     def test_malformed_json_unconfirmed_model_and_bad_review_fail_closed(self) -> None:
         bad_outputs = (
@@ -592,7 +718,13 @@ class FableAdvisorMcpTests(unittest.TestCase):
         tools = listed["result"]["tools"]
         self.assertEqual(
             [tool["name"] for tool in tools],
-            ["create_plan", "revise_plan", "review_plan", "status"],
+            [
+                "create_plan",
+                "revise_plan",
+                "get_plan_revision",
+                "review_plan",
+                "status",
+            ],
         )
         for tool in tools:
             annotations = tool["annotations"]
@@ -606,7 +738,20 @@ class FableAdvisorMcpTests(unittest.TestCase):
             tools[1]["inputSchema"]["required"],
             ["task", "current_plan", "critique", "history"],
         )
-        self.assertEqual(tools[2]["inputSchema"]["required"], ["packet"])
+        self.assertEqual(tools[2]["inputSchema"]["required"], ["operation_id"])
+        self.assertEqual(tools[3]["inputSchema"]["required"], ["packet"])
+        self.assertEqual(
+            tools[1]["inputSchema"]["properties"]["operation_id"]["maxLength"],
+            FABLE.MAX_OPERATION_ID_CHARS,
+        )
+        self.assertEqual(
+            tools[1]["inputSchema"]["properties"]["operation_id"]["pattern"],
+            FABLE.OPERATION_ID_RE.pattern,
+        )
+        self.assertEqual(
+            tools[2]["inputSchema"]["properties"]["operation_id"]["pattern"],
+            FABLE.OPERATION_ID_RE.pattern,
+        )
         for name in ("task", "current_plan", "critique", "history"):
             self.assertEqual(
                 tools[1]["inputSchema"]["properties"][name]["maxLength"],

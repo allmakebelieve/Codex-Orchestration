@@ -96,13 +96,18 @@ def invoke(
     """Dispatch one operation through the existing no-tools Fable bridge."""
 
     _, selected_effort = validate_route(provider_id, model, effort, operation)
-    expected_keys = {
+    required_keys = {
         "create_plan": {"packet"},
         "revise_plan": {"task", "current_plan", "critique", "history"},
         "review_plan": {"packet"},
     }
+    allowed_keys = set(required_keys[operation])
+    if operation == "revise_plan":
+        allowed_keys.add("operation_id")
     _require(
-        type(arguments) is dict and set(arguments) == expected_keys[operation],
+        type(arguments) is dict
+        and required_keys[operation].issubset(arguments)
+        and set(arguments).issubset(allowed_keys),
         "subscription arguments are invalid",
     )
     _require(

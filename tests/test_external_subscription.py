@@ -74,6 +74,34 @@ class ExternalSubscriptionTests(unittest.TestCase):
         create.assert_called_once_with(packet="bounded planning packet")
         self.assertIs(result, expected)
 
+        revision = {
+            **expected,
+            "signal": "PLAN_REVISION",
+            "operation_id": "revision-42",
+            "cache_hit": False,
+        }
+        with mock.patch.object(
+            SUBSCRIPTION.fable_advisor_mcp, "revise_plan", return_value=revision
+        ) as revise:
+            result = SUBSCRIPTION.invoke(
+                "revise_plan",
+                {
+                    "task": "task",
+                    "current_plan": "v1 plan",
+                    "critique": "F-1",
+                    "history": "none",
+                    "operation_id": "revision-42",
+                },
+            )
+        revise.assert_called_once_with(
+            task="task",
+            current_plan="v1 plan",
+            critique="F-1",
+            history="none",
+            operation_id="revision-42",
+        )
+        self.assertIs(result, revision)
+
     def test_argument_shape_and_runtime_metadata_fail_closed(self) -> None:
         with self.assertRaisesRegex(
             SUBSCRIPTION.SubscriptionAdapterError, "arguments"

@@ -10,9 +10,11 @@ no-tools/no-persistence process.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import shutil
 import subprocess
@@ -33,9 +35,24 @@ SUPPORTED_EFFORTS = routing_state.FABLE_EFFORTS
 FABLE_HELPER_MODEL = "claude-haiku-4-5-20251001"
 ALLOWED_RUNTIME_MODELS = frozenset({FABLE_MODEL, FABLE_HELPER_MODEL})
 CLAUDE_TIMEOUT_SECONDS = 600
+PLAN_REVISION_TIMEOUT_SECONDS = 1800
 AUTH_TIMEOUT_SECONDS = 20
 # Applies to the combined user-controlled text sent by one model operation.
 MAX_INPUT_CHARS = 200_000
+PLAN_REVISION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "signal": {"type": "string", "const": "PLAN_REVISION"},
+        "findings_ledger": {"type": "string", "minLength": 1},
+        "revised_plan": {"type": "string", "minLength": 1},
+    },
+    "required": ["signal", "findings_ledger", "revised_plan"],
+    "additionalProperties": False,
+}
+MAX_OPERATION_ID_CHARS = 128
+OPERATION_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+REVISION_CACHE_MAX_ENTRIES = 4
+_REVISION_CACHE: dict[str, dict[str, Any]] = {}
 SENSITIVE_ENV = {
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
@@ -230,6 +247,34 @@ def _first_non_empty_line(response: str) -> str:
     return next((line.strip() for line in response.splitlines() if line.strip()), "")
 
 
+def _revision_fingerprint(
+    *, prompt: str, system_prompt: str, route: dict[str, str]
+) -> str:
+    payload = json.dumps(
+        {
+            "operation": "plan revision",
+            "prompt": prompt,
+            "route": route,
+            "schema": PLAN_REVISION_SCHEMA,
+            "system_prompt": system_prompt,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _revision_operation_id(value: str | None, *, fingerprint: str) -> str:
+    if value is None:
+        return f"sha256:{fingerprint}"
+    if not isinstance(value, str) or not OPERATION_ID_RE.fullmatch(value):
+        raise AdvisorError(
+            "`operation_id` must use 1-128 ASCII letters, digits, `.`, `_`, `:`, or `-`."
+        )
+    return value
+
+
 def _validate_runtime_models(usage: Any) -> list[str]:
     raw_models = list(usage) if isinstance(usage, dict) else []
     if not all(isinstance(model, str) for model in raw_models):
@@ -255,12 +300,45 @@ def _invoke_fable(
     prompt: str,
     system_prompt: str,
     allowed_signals: set[str],
-) -> tuple[str, str, dict[str, str], dict[str, str], list[str]]:
+    operation_id: str | None = None,
+) -> tuple[
+    str,
+    str,
+    dict[str, str],
+    dict[str, str],
+    list[str],
+    str | None,
+    bool,
+]:
     """Run one stateless, seat-authorized, no-tools Fable operation."""
 
     route = load_fable_route(seat=seat)
     claude = resolve_claude()
     auth = check_claude_auth(claude)
+    revision_id: str | None = None
+    revision_fingerprint: str | None = None
+    if operation == "plan revision":
+        revision_fingerprint = _revision_fingerprint(
+            prompt=prompt, system_prompt=system_prompt, route=route
+        )
+        revision_id = _revision_operation_id(
+            operation_id, fingerprint=revision_fingerprint
+        )
+        cached = _REVISION_CACHE.get(revision_id)
+        if cached is not None:
+            if cached["fingerprint"] != revision_fingerprint:
+                raise AdvisorError(
+                    "The plan revision operation ID belongs to different inputs."
+                )
+            return (
+                cached["signal"],
+                cached["response"],
+                route,
+                auth,
+                list(cached["used_models"]),
+                revision_id,
+                True,
+            )
     command = [
         str(claude),
         "-p",
@@ -281,6 +359,13 @@ def _invoke_fable(
         "--system-prompt",
         system_prompt,
     ]
+    if operation == "plan revision":
+        command.extend(
+            (
+                "--json-schema",
+                json.dumps(PLAN_REVISION_SCHEMA, separators=(",", ":"), sort_keys=True),
+            )
+        )
     try:
         result = subprocess.run(
             command,
@@ -289,7 +374,11 @@ def _invoke_fable(
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=CLAUDE_TIMEOUT_SECONDS,
+            timeout=(
+                PLAN_REVISION_TIMEOUT_SECONDS
+                if operation == "plan revision"
+                else CLAUDE_TIMEOUT_SECONDS
+            ),
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
@@ -304,12 +393,46 @@ def _invoke_fable(
         payload = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
         raise AdvisorError(f"Claude Fable 5 {operation} returned malformed JSON.") from exc
-    if not isinstance(payload, dict) or not isinstance(payload.get("result"), str):
+    if not isinstance(payload, dict):
         raise AdvisorError(f"Claude Fable 5 {operation} returned an unexpected response.")
     # Authorize the complete runtime identity set before interpreting or
     # returning any model-authored plan/review content.
     used_models = _validate_runtime_models(payload.get("modelUsage"))
-    response = payload["result"].strip()
+    if operation == "plan revision":
+        structured = payload.get("structured_output")
+        if not isinstance(structured, dict) or set(structured) != set(
+            PLAN_REVISION_SCHEMA["required"]
+        ):
+            raise AdvisorError(
+                "Claude Fable 5 plan revision returned invalid structured output."
+            )
+        signal_value = structured.get("signal")
+        findings_ledger = structured.get("findings_ledger")
+        revised_plan = structured.get("revised_plan")
+        if (
+            signal_value != "PLAN_REVISION"
+            or not isinstance(findings_ledger, str)
+            or not findings_ledger.strip()
+            or not isinstance(revised_plan, str)
+            or not revised_plan.strip()
+        ):
+            raise AdvisorError(
+                "Claude Fable 5 plan revision returned invalid structured output."
+            )
+        response = (
+            "PLAN_REVISION\n\n"
+            "## FINDINGS_LEDGER\n"
+            f"{findings_ledger.strip()}\n\n"
+            "## REVISED_PLAN\n"
+            f"{revised_plan.strip()}"
+        )
+    else:
+        raw_response = payload.get("result")
+        if not isinstance(raw_response, str):
+            raise AdvisorError(
+                f"Claude Fable 5 {operation} returned an unexpected response."
+            )
+        response = raw_response.strip()
     signal = _first_non_empty_line(response)
     if signal not in allowed_signals:
         if operation == "plan review":
@@ -318,7 +441,20 @@ def _invoke_fable(
         raise AdvisorError(
             f"Claude Fable 5 {operation} omitted the required {expected} signal."
         )
-    return signal, response, route, auth, used_models
+    if revision_id is not None and revision_fingerprint is not None:
+        if (
+            revision_id not in _REVISION_CACHE
+            and len(_REVISION_CACHE) >= REVISION_CACHE_MAX_ENTRIES
+        ):
+            _REVISION_CACHE.pop(next(iter(_REVISION_CACHE)))
+        _REVISION_CACHE[revision_id] = {
+            "fingerprint": revision_fingerprint,
+            "response": response,
+            "route": dict(route),
+            "signal": signal,
+            "used_models": list(used_models),
+        }
+    return signal, response, route, auth, used_models, revision_id, False
 
 
 def _base_result(
@@ -336,7 +472,7 @@ def _base_result(
 
 def create_plan(packet: str) -> dict[str, Any]:
     values = _validate_inputs("plan creation", packet=packet)
-    signal, response, route, auth, used_models = _invoke_fable(
+    signal, response, route, auth, used_models, _, _ = _invoke_fable(
         operation="plan creation",
         seat="planner",
         prompt=values["packet"],
@@ -378,7 +514,11 @@ def _validate_revision_structure(response: str) -> None:
 
 
 def revise_plan(
-    task: str, current_plan: str, critique: str, history: str
+    task: str,
+    current_plan: str,
+    critique: str,
+    history: str,
+    operation_id: str | None = None,
 ) -> dict[str, Any]:
     values = _validate_inputs(
         "plan revision",
@@ -395,24 +535,51 @@ def revise_plan(
             "# COMPACT_CUMULATIVE_FINDINGS_HISTORY\n" + values["history"],
         )
     )
-    signal, response, route, auth, used_models = _invoke_fable(
+    signal, response, route, auth, used_models, revision_id, cache_hit = _invoke_fable(
         operation="plan revision",
         seat="planner",
         prompt=prompt,
         system_prompt=PLANNER_REVISE_SYSTEM_PROMPT,
         allowed_signals={"PLAN_REVISION"},
+        operation_id=operation_id,
     )
     _validate_revision_structure(response)
     return {
         "signal": signal,
         "revision": response,
+        "operation_id": revision_id,
+        "cache_hit": cache_hit,
         **_base_result(route=route, auth=auth, used_models=used_models),
+    }
+
+
+def get_plan_revision(operation_id: str) -> dict[str, Any]:
+    selected = _revision_operation_id(operation_id, fingerprint="")
+    route = load_fable_route(seat="planner")
+    auth = check_claude_auth()
+    cached = _REVISION_CACHE.get(selected)
+    if cached is None:
+        raise AdvisorError("No completed plan revision exists for that operation ID.")
+    if cached["route"] != route:
+        raise AdvisorError("The plan revision operation belongs to another Planner route.")
+    response = cached["response"]
+    _validate_revision_structure(response)
+    return {
+        "signal": cached["signal"],
+        "revision": response,
+        "operation_id": selected,
+        "cache_hit": True,
+        **_base_result(
+            route=route,
+            auth=auth,
+            used_models=list(cached["used_models"]),
+        ),
     }
 
 
 def review_plan(packet: str) -> dict[str, Any]:
     values = _validate_inputs("plan review", packet=packet)
-    signal, response, route, auth, used_models = _invoke_fable(
+    signal, response, route, auth, used_models, _, _ = _invoke_fable(
         operation="plan review",
         seat="advisor",
         prompt=values["packet"],
@@ -494,8 +661,33 @@ def tool_definitions() -> list[dict[str, Any]]:
                     "current_plan": {**string_property, "description": "Canonical current plan with source version."},
                     "critique": {**string_property, "description": "Latest Advisor critique with stable finding IDs."},
                     "history": {**string_property, "description": "Compact cumulative findings history."},
+                    "operation_id": {
+                        "type": "string",
+                        "maxLength": MAX_OPERATION_ID_CHARS,
+                        "pattern": OPERATION_ID_RE.pattern,
+                        "description": "Optional caller-known idempotency key for retry and retrieval.",
+                    },
                 },
                 "required": ["task", "current_plan", "critique", "history"],
+                "additionalProperties": False,
+            },
+            "annotations": annotations,
+        },
+        {
+            "name": "get_plan_revision",
+            "title": "Retrieve a completed Claude Fable 5 plan revision",
+            "description": "Retrieve a completed idempotent revision from this loaded bridge without another model call.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "operation_id": {
+                        "type": "string",
+                        "maxLength": MAX_OPERATION_ID_CHARS,
+                        "pattern": OPERATION_ID_RE.pattern,
+                        "description": "Operation ID supplied to or returned by revise_plan.",
+                    }
+                },
+                "required": ["operation_id"],
                 "additionalProperties": False,
             },
             "annotations": annotations,
@@ -547,7 +739,7 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
         result = {
             "protocolVersion": "2025-06-18",
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "codex-orchestration-fable-advisor", "version": "2.0.0"},
+            "serverInfo": {"name": "codex-orchestration-fable-advisor", "version": "2.1.0"},
         }
     elif method == "ping":
         result = {}
@@ -562,15 +754,22 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
                 args = _tool_arguments(arguments, {"packet"})
                 result = _tool_result(create_plan(args.get("packet")))
             elif name == "revise_plan":
-                args = _tool_arguments(arguments, {"task", "current_plan", "critique", "history"})
+                args = _tool_arguments(
+                    arguments,
+                    {"task", "current_plan", "critique", "history", "operation_id"},
+                )
                 result = _tool_result(
                     revise_plan(
                         args.get("task"),
                         args.get("current_plan"),
                         args.get("critique"),
                         args.get("history"),
+                        args.get("operation_id"),
                     )
                 )
+            elif name == "get_plan_revision":
+                args = _tool_arguments(arguments, {"operation_id"})
+                result = _tool_result(get_plan_revision(args.get("operation_id")))
             elif name == "review_plan":
                 args = _tool_arguments(arguments, {"packet"})
                 result = _tool_result(review_plan(args.get("packet")))
