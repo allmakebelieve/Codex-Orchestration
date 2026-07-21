@@ -32,7 +32,7 @@ PLUGIN_ID = "codex-orchestration@codex-orchestration"
 MARKETPLACE_NAME = "codex-orchestration"
 OLD_RELEASE = "a1d9c546665c3253cdcaa8fe5c0c060199a6126c"
 OLD_VERSION = "0.5.0"
-NEW_VERSION = "0.8.4"
+NEW_VERSION = "0.8.5"
 COMMAND_TIMEOUT_SECONDS = 60
 
 
@@ -536,7 +536,11 @@ def main() -> int:
                 "Explicit seat labels are authoritative",
                 "never reinterpret a supplied `planner:` model as an Advisor",
                 "Fable Planner uses `create_plan` and `revise_plan`",
-                "`get_plan_revision` requires that ID plus the same revision inputs",
+                "Omit `operation_id` by default",
+                (
+                    "`get_plan_revision` requires a known ID plus the same "
+                    "revision inputs"
+                ),
                 "Designer may edit only explicitly delegated design artifacts",
                 "is Kimi available to use as Designer?",
                 "Implicit invocation is discovery, not mutation authority",

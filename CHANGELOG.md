@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.5 — Unreleased
+
+- Default Fable plan revisions to the bridge's deterministic input-bound operation
+  ID. Callers no longer need a UUID generator for safe retries and should provide a
+  UUID only when they already have a trusted generator and need a pre-dispatch ID.
+
 ## 0.8.4 — Unreleased
 
 - Launch every Claude Code authentication and Fable subprocess from the stable
